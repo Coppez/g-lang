@@ -267,10 +267,36 @@ fn parse_let_stmt_no_semicolon(input: Tokens) -> IResult<Tokens, Stmt> {
 }
 
 fn parse_assign_stmt_no_semicolon(input: Tokens) -> IResult<Tokens, Stmt> {
-    map(
-        tuple((parse_ident, assign_tag, parse_expr)),
-        |(ident, _, expr)| Stmt::AssignStmt(ident, expr),
-    )(input)
+    let (i1, ident) = parse_ident(input)?;
+    let (i2, op) = alt((
+        map(assign_tag, |_| "=".to_string()),
+        map(plus_assign_tag, |_| "+".to_string()),
+        map(minus_assign_tag, |_| "-".to_string()),
+        map(multiply_assign_tag, |_| "*".to_string()),
+        map(divide_assign_tag, |_| "/".to_string()),
+        map(modulo_assign_tag, |_| "%".to_string()),
+    ))(i1)?;
+    let (i3, expr) = parse_expr(i2)?;
+
+    let stmt = if op == "=" {
+        Stmt::AssignStmt(ident, expr)
+    } else {
+        let binop_expr = Expr::InfixExpr(
+            match op.as_str() {
+                "+" => Infix::Plus,
+                "-" => Infix::Minus,
+                "*" => Infix::Multiply,
+                "/" => Infix::Divide,
+                "%" => Infix::Modulo,
+                _ => unreachable!(),
+            },
+            Box::new(Expr::IdentExpr(ident.clone())),
+            Box::new(expr),
+        );
+        Stmt::AssignStmt(ident, binop_expr)
+    };
+
+    Ok((i3, stmt))
 }
 
 fn parse_break_stmt(input: Tokens) -> IResult<Tokens, Stmt> {
