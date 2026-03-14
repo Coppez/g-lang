@@ -157,7 +157,7 @@ OPTIONS:
 
 ## Documentation
 
-For comprehensive documentation and more examples, please visit the [official documentation website](https://g-lang.vercel.app)
+For comprehensive documentation and more examples, please visit the [official documentation website](https://g-language.vercel.app)
 
 ## License
 

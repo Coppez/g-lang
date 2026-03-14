@@ -1,7 +1,7 @@
 pub fn print_help() {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
     const GITHUB: &str = "https://github.com/Lucop1911/g-lang";
-    const DOCUMENTATION: &str = "https://g-lang.vercel.app";
+    const DOCUMENTATION: &str = "https://g-language.vercel.app";
 
     print!("G-lang v");
     println!("{}", VERSION);
