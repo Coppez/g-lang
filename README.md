@@ -56,14 +56,14 @@ Add `C:\path\to\g-lang\target\release` to your system PATH environment variable.
 
 Start the interactive REPL:
 ```bash
-g-lang
+gl
 ```
 
 ### Run a Script
 
 Execute a `.g` file:
 ```bash
-g-lang run script.g
+gl run script.g
 ```
 
 ### Basic Examples
@@ -144,7 +144,7 @@ person.greet();
 
 ```
 USAGE:
-    g-lang [COMMAND] [OPTIONS]
+    gl [COMMAND] [OPTIONS]
 
 COMMANDS:
     (no command)       Start the REPL (Read-Eval-Print Loop)
