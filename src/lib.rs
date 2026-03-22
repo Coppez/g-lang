@@ -2,6 +2,7 @@ pub mod ast;
 pub mod lexer;
 pub mod parser;
 pub mod interpreter;
+pub mod compiler;
 pub mod errors;
 pub mod std;
 pub mod runners;

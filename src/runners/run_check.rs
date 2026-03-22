@@ -1,5 +1,6 @@
-use crate::{Parser, Lexer, Tokens};
+use crate::compiler::compute_slots::compute_slots;
 use crate::parser_errors::{convert_nom_error, show_error_context};
+use crate::{Lexer, Parser, Tokens};
 
 pub fn run_check(input: &str) {
     // Lexing
@@ -19,13 +20,13 @@ pub fn run_check(input: &str) {
     let tokens = Tokens::new(&token_vec);
 
     // Parsing
-    let _ = match Parser::parse_tokens(tokens) {
+    let mut program = match Parser::parse_tokens(tokens) {
         Ok((_, program)) => program,
         Err(e) => {
             eprintln!("╭─ Check Failed ─────────────────────────────");
             eprintln!("│");
             eprintln!("│ Parser Error:");
-            
+
             // Extract better error information
             if let nom::Err::Error(err) | nom::Err::Failure(err) = &e {
                 let parser_error = convert_nom_error(&e, "");
@@ -35,12 +36,14 @@ pub fn run_check(input: &str) {
             } else {
                 eprintln!("│   Unexpected end of input");
             }
-            
+
             eprintln!("│");
             eprintln!("╰────────────────────────────────────────────");
             return;
         }
     };
+
+    compute_slots(&mut program);
 
     println!("╭─ Check Passed ─────────────────────────────");
     println!("│");

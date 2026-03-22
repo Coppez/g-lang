@@ -1,5 +1,6 @@
 use crate::{Parser, Evaluator, Lexer, Tokens, interpreter::obj::Object};
 use crate::parser_errors::{convert_nom_error, show_error_context};
+use crate::compiler::compute_slots::compute_slots;
 
 pub async fn run_source(input: &str, evaluator: &mut Evaluator) {
     // Lexing
@@ -18,7 +19,7 @@ pub async fn run_source(input: &str, evaluator: &mut Evaluator) {
     let tokens = Tokens::new(&token_vec);
 
     // Parsing
-    let program = match Parser::parse_tokens(tokens) {
+    let mut program = match Parser::parse_tokens(tokens) {
         Ok((_, program)) => program,
         Err(e) => {
             eprintln!("╭─ Parser Error ─────────────────────────────");
@@ -39,6 +40,8 @@ pub async fn run_source(input: &str, evaluator: &mut Evaluator) {
             return;
         }
     };
+
+    compute_slots(&mut program);
 
     // Evaluate
     let result = evaluator.eval_program(program).await;

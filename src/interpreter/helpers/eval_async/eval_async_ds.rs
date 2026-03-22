@@ -17,8 +17,8 @@ impl Evaluator {
             let value = self_clone.eval_expr(value_expr).await;
             
             match target_expr {
-                Expr::IdentExpr(Ident(ref var_name)) => {
-                    let current_value = match self_clone.env.lock().unwrap().get(var_name) {
+                Expr::IdentExpr(Ident { name: ref var_name, .. }) => {
+                    let current_value = match self_clone.env.lock().unwrap().get_by_name(var_name) {
                         Some(val) => val,
                         None => return Object::Error(RuntimeError::UndefinedVariable(var_name.clone())),
                     };
@@ -61,11 +61,11 @@ impl Evaluator {
                         }
                     };
                     
-                    self_clone.env.lock().unwrap().set(var_name, updated_value);
+                    self_clone.env.lock().unwrap().set_by_name(var_name, updated_value);
                     value
                 }
                 Expr::ThisExpr => {
-                    let current_this = self_clone.env.lock().unwrap().get("this");
+                    let current_this = self_clone.env.lock().unwrap().get_by_name("this");
                     match current_this {
                         Some(Object::Array(mut arr)) => {
                             match self_clone.obj_to_int(index.clone()) {
@@ -84,7 +84,7 @@ impl Evaluator {
                                         });
                                     }
                                     arr[idx] = value.clone();
-                                    self_clone.env.lock().unwrap().set("this", Object::Array(arr));
+                                    self_clone.env.lock().unwrap().set_by_name("this", Object::Array(arr));
                                     value
                                 }
                                 Err(err) => err,
@@ -96,7 +96,7 @@ impl Evaluator {
                                 return key;
                             }
                             hash.insert(key, value.clone());
-                            self_clone.env.lock().unwrap().set("this", Object::Hash(hash));
+                            self_clone.env.lock().unwrap().set_by_name("this", Object::Hash(hash));
                             value
                         }
                         Some(other) => {

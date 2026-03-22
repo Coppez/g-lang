@@ -48,7 +48,21 @@ pub enum Object {
     Break,
     Continue,
     ThrownValue(Box<Object>),
-    Future(Arc<Mutex<Option<std::pin::Pin<Box<dyn std::future::Future<Output = Result<Object, RuntimeError>> + Send + 'static>>>>>),
+    Future(
+        Arc<
+            Mutex<
+                Option<
+                    std::pin::Pin<
+                        Box<
+                            dyn std::future::Future<Output = Result<Object, RuntimeError>>
+                                + Send
+                                + 'static,
+                        >,
+                    >,
+                >,
+            >,
+        >,
+    ),
     #[cfg(feature = "wasm")]
     WasmModule {
         name: String,

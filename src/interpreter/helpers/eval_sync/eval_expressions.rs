@@ -9,7 +9,7 @@ use super::super::super::eval::Evaluator;
 
 impl Evaluator {
     pub fn eval_this(&mut self) -> Object {
-        match self.env.lock().unwrap().get("this") {
+        match self.env.lock().unwrap().get_by_name("this") {
             Some(obj) => obj,
             None => Object::Error(RuntimeError::InvalidOperation(
                 "'this' can only be used inside a method".to_string(),
@@ -18,12 +18,10 @@ impl Evaluator {
     }
 
     pub fn eval_ident(&mut self, ident: Ident) -> Object {
-        let Ident(name) = ident;
         let borrow_env = self.env.lock().unwrap();
-        let var = borrow_env.get(&name);
-        match var {
+        match borrow_env.get(&ident) {
             Some(o) => o,
-            None => Object::Error(RuntimeError::UndefinedVariable(name)),
+            None => Object::Error(RuntimeError::UndefinedVariable(ident.name)),
         }
     }
 
@@ -31,7 +29,7 @@ impl Evaluator {
         match literal {
             Literal::IntLiteral(i) => Object::Integer(i),
             Literal::BigIntLiteral(big) => Object::BigInteger(big),
-            Literal::FloatLitera(f) => Object::Float(f),
+            Literal::FloatLiteral(f) => Object::Float(f),
             Literal::BoolLiteral(b) => Object::Boolean(b),
             Literal::StringLiteral(s) => Object::String(s),
             Literal::NullLiteral => Object::Null,

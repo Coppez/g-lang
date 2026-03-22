@@ -40,7 +40,7 @@ fn parse_literal(input: Tokens) -> IResult<Tokens, Literal> {
     match &t1.token[0] {
         Token::IntLiteral(n) => Ok((i1, Literal::IntLiteral(*n))),
         Token::BigIntLiteral(n) => Ok((i1, Literal::BigIntLiteral(n.clone()))),
-        Token::FloatLiteral(f) => Ok((i1, Literal::FloatLitera(*f))),
+        Token::FloatLiteral(f) => Ok((i1, Literal::FloatLiteral(*f))),
         Token::StringLiteral(s) => Ok((i1, Literal::StringLiteral(s.clone()))),
         Token::BoolLiteral(b) => Ok((i1, Literal::BoolLiteral(*b))),
         Token::NullLiteral => Ok((i1, Literal::NullLiteral)),
@@ -56,7 +56,7 @@ fn parse_ident(input: Tokens) -> IResult<Tokens, Ident> {
     }
 
     match &t1.token[0] {
-        Token::Ident(name) => Ok((i1, Ident(name.clone()))),
+        Token::Ident(name) => Ok((i1, Ident::new(name.clone()))),
         _ => Err(Err::Error(Error::new(input, ErrorKind::Tag))),
     }
 }
@@ -409,7 +409,12 @@ fn parse_pratt_expr(input: Tokens, precedence: Precedence) -> IResult<Tokens, Ex
             }
             Token::Dot => {
                 let (i1, _) = dot_tag(i)?;
-                let (i2, Ident(field_name)) = parse_ident(i1)?;
+                let (
+                    i2,
+                    Ident {
+                        name: field_name, ..
+                    },
+                ) = parse_ident(i1)?;
 
                 if peek_matches(i2, Token::LParen) {
                     let (i3, args) = parens(comma_separated0(parse_expr))(i2)?;
@@ -429,7 +434,12 @@ fn parse_pratt_expr(input: Tokens, precedence: Precedence) -> IResult<Tokens, Ex
             }
             Token::DoubleColon => {
                 let (i1, _) = double_colon_tag(i)?;
-                let (i2, Ident(field_name)) = parse_ident(i1)?;
+                let (
+                    i2,
+                    Ident {
+                        name: field_name, ..
+                    },
+                ) = parse_ident(i1)?;
 
                 if peek_matches(i2, Token::LParen) {
                     let (i3, args) = parens(comma_separated0(parse_expr))(i2)?;
@@ -689,17 +699,17 @@ fn parse_c_style_for(input: Tokens) -> IResult<Tokens, Stmt> {
 
 fn parse_import_stmt(input: Tokens) -> IResult<Tokens, Stmt> {
     let (i1, _) = import_tag(input)?;
-    let (i2, Ident(first)) = parse_ident(i1)?;
+    let (i2, Ident { name: first, .. }) = parse_ident(i1)?;
     let mut path = vec![first];
 
     let (i3, rest) = many0(preceded(double_colon_tag, parse_ident))(i2)?;
-    for Ident(name) in rest {
+    for Ident { name, .. } in rest {
         path.push(name);
     }
 
     let (i4, items) = if peek_matches(i3, Token::LBrace) {
         let (i_items, idents) = braced(comma_separated1(parse_ident))(i3)?;
-        let names = idents.into_iter().map(|Ident(n)| n).collect();
+        let names = idents.into_iter().map(|Ident { name, .. }| name).collect();
         (i_items, ImportItems::Specific(names))
     } else {
         (i3, ImportItems::All)

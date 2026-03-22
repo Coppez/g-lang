@@ -68,10 +68,10 @@ impl Evaluator {
                 }
             };
 
-            let Ident(var_name) = ident;
+            let Ident { name: var_name, .. } = ident;
 
             for item in items {
-                self_clone.env.lock().unwrap().set(&var_name, item);
+                self_clone.env.lock().unwrap().set_by_name(&var_name, item);
 
                 let result = self_clone.eval_blockstmt(&body).await;
                 match result {
@@ -164,13 +164,16 @@ impl Evaluator {
             };
 
             if let Some(exception) = caught_exception_obj {
-                if let Some(Ident(e_name)) = catch_ident {
+                if let Some(Ident { name: e_name, .. }) = catch_ident {
                     if let Some(c_body) = catch_body {
                         let old_env = Arc::clone(&self_clone.env);
-                        let mut new_env = Environment::new_with_outer(Arc::clone(&self_clone.env));
-                        new_env.set(&e_name, exception);
+                        // Allocate slots for any let-bindings in the catch body.
+                        // The catch variable itself is stored by name.
+                        let num_slots = Environment::count_slots(&[], &c_body);
+                        let mut new_env = Environment::new_function_env(Arc::clone(&self_clone.env), num_slots);
+                        new_env.set_by_name(&e_name, exception);
                         self_clone.env = Arc::new(Mutex::new(new_env));
-                        
+
                         try_result = self_clone.eval_blockstmt(&c_body).await;
                         self_clone.env = old_env;
                     }

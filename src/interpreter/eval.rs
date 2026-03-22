@@ -107,14 +107,19 @@ impl Evaluator {
                     let object = self_clone.eval_expr(expr).await;
                     self_clone.register_ident(ident, object)
                 }
-                Stmt::FnStmt { name, params, body } => {
+                Stmt::FnStmt { name, mut params, body } => {
+                    for (i, param) in params.iter_mut().enumerate() {
+                        if param.slot.is_unset() {
+                            param.slot = crate::ast::ast::SlotIndex(i as u16);
+                        }
+                    }
                     let fn_obj = Object::Function(params, body, Arc::clone(&self_clone.env));
                     self_clone.register_ident(name, fn_obj)
                 }
                 Stmt::AssignStmt(ident, expr) => {
                     // Check if variable exists
-                    let Ident(ref name) = ident;
-                    if self_clone.env.lock().unwrap().get(name).is_none() {
+                    let Ident { ref name, .. } = ident;
+                    if self_clone.env.lock().unwrap().get_by_name(name).is_none() {
                         return Object::Error(RuntimeError::UndefinedVariable(name.clone()));
                     }
                     // Reassign the variable
@@ -381,13 +386,18 @@ impl Evaluator {
                 let object = self.eval_expr_sync(expr);
                 self.register_ident(ident, object)
             }
-            Stmt::FnStmt { name, params, body } => {
+            Stmt::FnStmt { name, mut params, body } => {
+                for (i, param) in params.iter_mut().enumerate() {
+                    if param.slot.is_unset() {
+                        param.slot = crate::ast::ast::SlotIndex(i as u16);
+                    }
+                }
                 let fn_obj = Object::Function(params, body, Arc::clone(&self.env));
                 self.register_ident(name, fn_obj)
             }
             Stmt::AssignStmt(ident, expr) => {
-                let Ident(ref name) = ident;
-                if self.env.lock().unwrap().get(name).is_none() {
+                let Ident { ref name, .. } = ident;
+                if self.env.lock().unwrap().get_by_name(name).is_none() {
                     return Object::Error(RuntimeError::UndefinedVariable(name.clone()));
                 }
                 let object = self.eval_expr_sync(expr);

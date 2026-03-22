@@ -236,6 +236,7 @@ impl ModuleRegistry {
     
     async fn parse_and_extract_module(module_registry_arc: Arc<Mutex<Self>>, source: &str, path: &[String]) -> Result<Module, RuntimeError> {
         use crate::{Lexer, Parser, Tokens};
+        use crate::compiler::compute_slots::compute_slots;
         
         let token_vec = Lexer::lex_tokens(source.as_bytes())
             .map_err(|e| RuntimeError::InvalidOperation(
@@ -245,11 +246,13 @@ impl ModuleRegistry {
         
         let tokens = Tokens::new(&token_vec);
         
-        let program = Parser::parse_tokens(tokens)
+        let mut program = Parser::parse_tokens(tokens)
             .map_err(|e| RuntimeError::InvalidOperation(
                 format!("Failed to parse module: {:?}", e)
             ))?
             .1;
+        
+        compute_slots(&mut program);
         
         let base_path = { module_registry_arc.lock().unwrap().base_path.clone() };
         let registry_arc_for_eval = Arc::new(Mutex::new(ModuleRegistry::new(base_path)));
@@ -277,25 +280,25 @@ impl ModuleRegistry {
             match stmt.clone() {
                 Stmt::StructStmt { name, .. } => {
                     let _obj = evaluator.eval_statement(stmt).await;
-                    let Ident(struct_name) = name;
+                    let Ident { name: struct_name, .. } = name;
                     
-                    if let Some(struct_obj) = evaluator.env.lock().unwrap().get(&struct_name) {
+                    if let Some(struct_obj) = evaluator.env.lock().unwrap().get_by_name(&struct_name) {
                         exports.insert(struct_name.clone(), struct_obj);
                     }
                 }
                 Stmt::LetStmt(ident, _) => {
                     evaluator.eval_statement(stmt).await;
-                    let Ident(var_name) = ident;
+                    let Ident { name: var_name, .. } = ident;
                     
-                    if let Some(obj) = evaluator.env.lock().unwrap().get(&var_name) {
+                    if let Some(obj) = evaluator.env.lock().unwrap().get_by_name(&var_name) {
                         exports.insert(var_name, obj);
                     }
                 }
                 Stmt::FnStmt { name, params: _, body: _ } => {
                     evaluator.eval_statement(stmt).await;
-                    let Ident(fn_name) = name;
+                    let Ident { name: fn_name, .. } = name;
 
-                    if let Some(obj) = evaluator.env.lock().unwrap().get(&fn_name) {
+                    if let Some(obj) = evaluator.env.lock().unwrap().get_by_name(&fn_name) {
                         exports.insert(fn_name, obj);
                     }
                 }

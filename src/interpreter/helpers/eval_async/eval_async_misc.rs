@@ -32,7 +32,7 @@ impl Evaluator {
                         name: path.join("::"),
                         exports: module.exports.clone(),
                     };
-                    self_clone.env.lock().unwrap().set(&simple_name, module_obj);
+                    self_clone.env.lock().unwrap().set_by_name(&simple_name, module_obj);
                 }
                 ImportItems::Specific(names) => {
                     let mut exports = HashMap::new();
@@ -49,11 +49,11 @@ impl Evaluator {
                         name: path.join("::"),
                         exports,
                     };
-                    self_clone.env.lock().unwrap().set(&simple_name, module_obj);
+                    self_clone.env.lock().unwrap().set_by_name(&simple_name, module_obj);
                 }
                 ImportItems::Single(name) => {
                     if let Some(obj) = module.exports.get(&name) {
-                        self_clone.env.lock().unwrap().set(&name, obj.clone());
+                        self_clone.env.lock().unwrap().set_by_name(&name, obj.clone());
                     } else {
                         return Object::Error(RuntimeError::InvalidOperation(
                             format!("Module {} has no export '{}'", module.name, name)

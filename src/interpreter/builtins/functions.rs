@@ -69,7 +69,7 @@ fn add_builtin(
 ) -> (Ident, Object) {
     let name = name.to_owned();
     (
-        Ident(name.clone()),
+        Ident::new(name.clone()),
         Object::Builtin(name, min_param, max_param, func),
     )
 }

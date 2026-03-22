@@ -109,10 +109,10 @@ impl Evaluator {
             }
 
             let old_env = Arc::clone(&self_clone.env);
-            let mut new_env = Environment::new_with_outer(f_env_clone);
-            let zipped = params.into_iter().zip(args);
-            for (Ident(name), o) in zipped {
-                new_env.set(&name, o);
+            let num_slots = Environment::count_slots(&params, &body);
+            let mut new_env = Environment::new_function_env(f_env_clone, num_slots);
+            for (param, arg) in params.iter().zip(args) {
+                new_env.set(param, arg);
             }
             self_clone.env = Arc::new(Mutex::new(new_env));
             let object = self_clone.eval_blockstmt(&body).await;
@@ -151,12 +151,14 @@ impl Evaluator {
         
         let f_env_clone = Arc::clone(f_env);
         let mut evaluator = self.clone();
+        let params_clone = params.clone();
+        let args_clone = args.clone();
     
+        let num_slots = Environment::count_slots(&params_clone, &body);
         let future: JoinHandle<Object> = tokio::spawn(async move {
-            let mut new_env = Environment::new_with_outer(f_env_clone);
-            for (i, ident) in params.iter().enumerate() {
-                let Ident(name) = ident;
-                new_env.set(name, args[i].clone());
+            let mut new_env = Environment::new_function_env(f_env_clone, num_slots);
+            for (param, arg) in params_clone.iter().zip(args_clone) {
+                new_env.set(param, arg);
             }
             evaluator.env = Arc::new(Mutex::new(new_env));
             evaluator.in_async_context = true;
@@ -249,12 +251,16 @@ impl Evaluator {
                 });
             }
 
-            let zipped = params.into_iter().zip(args);
-            for (Ident(name), o) in zipped {
-                self_clone.env.lock().unwrap().set(&name, o);
+            let old_env = Arc::clone(&self_clone.env);
+            let num_slots = Environment::count_slots(&params, &body);
+            let mut new_env = Environment::new_function_env(Arc::clone(&old_env), num_slots);
+            for (param, arg) in params.iter().zip(args) {
+                new_env.set(param, arg);
             }
-            
-            self_clone.eval_blockstmt(&body).await
+            self_clone.env = Arc::new(Mutex::new(new_env));
+            let result = self_clone.eval_blockstmt(&body).await;
+            self_clone.env = old_env;
+            self_clone.returned(result)
         }
     }
 

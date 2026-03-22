@@ -64,10 +64,10 @@ pub enum Expr {
         array: Box<Expr>,
         index: Box<Expr>,
     },
-    MethodCallExpr{
+    MethodCallExpr {
         object: Box<Expr>,
         method: String,
-        arguments: Vec<Expr>
+        arguments: Vec<Expr>,
     },
     StructLiteral {
         name: Ident,
@@ -110,7 +110,7 @@ pub enum Expr {
 pub enum Literal {
     IntLiteral(i64),
     BigIntLiteral(BigInt),
-    FloatLitera(f64),
+    FloatLiteral(f64),
     BoolLiteral(bool),
     StringLiteral(String),
     NullLiteral,
@@ -121,7 +121,7 @@ impl Hash for Literal {
         match self {
             Literal::IntLiteral(i) => i.hash(state),
             Literal::BigIntLiteral(b) => b.hash(state),
-            Literal::FloatLitera(f) => f.to_bits().hash(state),
+            Literal::FloatLiteral(f) => f.to_bits().hash(state),
             Literal::BoolLiteral(b) => b.hash(state),
             Literal::StringLiteral(s) => s.hash(state),
             Literal::NullLiteral => "null".hash(state),
@@ -129,8 +129,36 @@ impl Hash for Literal {
     }
 }
 
+// Slot index for O(1) variable access instead of O(n) name-based lookups.
+#[derive(PartialEq, Debug, Eq, Clone, Copy, Hash)]
+pub struct SlotIndex(pub u16);
+
+impl SlotIndex {
+    pub const UNSET: SlotIndex = SlotIndex(u16::MAX);
+
+    pub fn is_unset(&self) -> bool {
+        *self == Self::UNSET
+    }
+}
+
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
-pub struct Ident(pub String);
+pub struct Ident {
+    pub name: String,
+    pub slot: SlotIndex,
+}
+
+impl Ident {
+    pub fn new(name: String) -> Self {
+        Ident {
+            name,
+            slot: SlotIndex::UNSET,
+        }
+    }
+
+    pub fn with_slot(name: String, slot: SlotIndex) -> Self {
+        Ident { name, slot }
+    }
+}
 
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub enum Prefix {
@@ -159,15 +187,15 @@ pub enum Infix {
 #[derive(PartialEq, PartialOrd, Debug, Clone)]
 pub enum Precedence {
     PLowest,
-    POr,           // Lowest logical operator
-    PAnd,          // Higher than OR
-    PEquals,       // ==, !=
-    PLessGreater,  // <, >, <=, >=
-    PSum,          // +, -
-    PProduct,      // *, /, %
-    PPrefix,       // !, -, +
-    PCall,         // function calls
-    PIndex,        // array[index]
+    POr,          // Lowest logical operator
+    PAnd,         // Higher than OR
+    PEquals,      // ==, !=
+    PLessGreater, // <, >, <=, >=
+    PSum,         // +, -
+    PProduct,     // *, /, %
+    PPrefix,      // !, -, +
+    PCall,        // function calls
+    PIndex,       // array[index]
 }
 
 #[derive(PartialEq, Debug, Clone, Hash)]

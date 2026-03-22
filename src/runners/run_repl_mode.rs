@@ -2,6 +2,7 @@ use std::io::{self, Write};
 
 use crate::{Evaluator, Lexer, Parser, Tokens, interpreter::obj::Object};
 use crate::parser_errors::{convert_nom_error, show_error_context};
+use crate::compiler::compute_slots::compute_slots;
 
 pub async fn repl(mut evaluator: Evaluator) {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -37,7 +38,7 @@ pub async fn repl(mut evaluator: Evaluator) {
 
         let tokens = Tokens::new(&token_vec);
 
-        let program = match Parser::parse_tokens(tokens) {
+        let mut program = match Parser::parse_tokens(tokens) {
             Ok((_, program)) => program,
             Err(e) => {
                 // Extract better error information
@@ -51,6 +52,8 @@ pub async fn repl(mut evaluator: Evaluator) {
                 continue;
             }
         };
+
+        compute_slots(&mut program);
 
         match evaluator.eval_program(program).await {
             Object::Null => {}

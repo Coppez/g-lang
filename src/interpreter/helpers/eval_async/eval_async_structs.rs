@@ -14,16 +14,16 @@ impl Evaluator {
     pub fn async_eval_struct_def(&mut self, name: Ident, fields: Vec<(Ident, Expr)>, methods: Vec<(Ident, Expr)>) -> impl Future<Output = Object> + Send + '_  {
         let mut self_clone = self.clone();
         async move {
-            let Ident(struct_name) = name.clone();
+            let Ident { name: struct_name, .. } = name.clone();
             
             let mut default_fields = HashMap::new();
-            for (Ident(field_name), expr) in fields {
+            for (Ident { name: field_name, .. }, expr) in fields {
                 let value = self_clone.eval_expr(expr).await;
                 default_fields.insert(field_name, value);
             }
             
             let mut struct_methods = HashMap::new();
-            for (Ident(method_name), expr) in methods {
+            for (Ident { name: method_name, .. }, expr) in methods {
                 let method_obj = self_clone.eval_expr(expr).await;
                 struct_methods.insert(method_name, method_obj);
             }
@@ -34,7 +34,7 @@ impl Evaluator {
                 methods: struct_methods,
             };
             
-            self_clone.env.lock().unwrap().set(&struct_name, struct_obj.clone());
+            self_clone.env.lock().unwrap().set_by_name(&struct_name, struct_obj.clone());
             
             Object::Null
         }
@@ -43,9 +43,9 @@ impl Evaluator {
     pub fn async_eval_struct_literal(&mut self, name: Ident, field_assignments: Vec<(Ident, Expr)>) -> impl Future<Output = Object> + Send + '_  {
         let mut self_clone = self.clone();
         async move {
-            let Ident(struct_name) = name;
+            let Ident { name: struct_name, .. } = name;
             
-            let (default_fields, methods) = match self_clone.env.lock().unwrap().get(&struct_name) {
+            let (default_fields, methods) = match self_clone.env.lock().unwrap().get_by_name(&struct_name) {
                 Some(Object::Struct { fields, methods, .. }) => (fields.clone(), methods.clone()),
                 Some(_) => return Object::Error(RuntimeError::InvalidOperation(
                     format!("{} is not a struct", struct_name)
@@ -56,7 +56,7 @@ impl Evaluator {
             let mut instance_fields = default_fields;
             
             // Override with provided field assignments
-            for (Ident(field_name), expr) in field_assignments {
+            for (Ident { name: field_name, .. }, expr) in field_assignments {
                 let value = self_clone.eval_expr(expr).await;
                 instance_fields.insert(field_name, value);
             }
@@ -104,12 +104,12 @@ impl Evaluator {
             let value = self_clone.eval_expr(value_expr).await;
             
             if let Expr::ThisExpr = object_expr {
-                let current_this = self_clone.env.lock().unwrap().get("this");
+                let current_this = self_clone.env.lock().unwrap().get_by_name("this");
                 match current_this {
                     Some(Object::Struct { name, mut fields, methods }) => {
                         fields.insert(field_name, value.clone());
                         let updated_struct = Object::Struct { name, fields, methods };
-                        self_clone.env.lock().unwrap().set("this", updated_struct);
+                        self_clone.env.lock().unwrap().set_by_name("this", updated_struct);
                         return value;
                     }
                     Some(other) => {
@@ -134,7 +134,7 @@ impl Evaluator {
     pub fn async_eval_method_call(&mut self, object_expr: Expr, method_name: String, args_expr: Vec<Expr>) -> impl Future<Output = Object> + Send + '_  {
         let mut self_clone = self.clone();
         async move {
-            let var_name_if_ident = if let Expr::IdentExpr(Ident(ref name)) = object_expr {
+            let var_name_if_ident = if let Expr::IdentExpr(Ident { ref name, .. }) = object_expr {
                 Some(name.clone())
             } else {
                 None
@@ -145,13 +145,15 @@ impl Evaluator {
             if let Object::Struct { ref methods, .. } = object {
                 if let Some(method_obj) = methods.get(&method_name) {
                     let old_env = Arc::clone(&self_clone.env);
-                    let mut new_env = Environment::new_with_outer(Arc::clone(&self_clone.env));
-                    new_env.set("this", object.clone());
-                    
-                    self_clone.env = Arc::new(Mutex::new(new_env));
-                    
+
                     let result = match method_obj.clone() {
                         Object::Function(params, body, _) => {
+                            // Allocate enough slots for params + locals in the method body,
+                            // plus set "this" by name so methods can reference it.
+                            let num_slots = Environment::count_slots(&params, &body);
+                            let mut new_env = Environment::new_function_env(Arc::clone(&self_clone.env), num_slots);
+                            new_env.set_by_name("this", object.clone());
+                            self_clone.env = Arc::new(Mutex::new(new_env));
                             let mut args = Vec::new();
                             for e in args_expr {
                                 args.push(self_clone.eval_expr(e).await);
@@ -163,12 +165,12 @@ impl Evaluator {
                         }
                     };
                     
-                    let modified_this = self_clone.env.lock().unwrap().get("this").unwrap_or(object.clone());
+                    let modified_this = self_clone.env.lock().unwrap().get_by_name("this").unwrap_or(object.clone());
                     
                     self_clone.env = old_env;
                     
                     if let Some(var_name) = var_name_if_ident {
-                        self_clone.env.lock().unwrap().set(&var_name, modified_this.clone());
+                        self_clone.env.lock().unwrap().set_by_name(&var_name, modified_this.clone());
                     }
 
                     let final_result = match result {

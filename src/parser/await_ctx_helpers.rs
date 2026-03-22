@@ -1,4 +1,7 @@
-use crate::{ast::ast::{Expr, Program, Stmt}, errors::ParserError};
+use crate::{
+    ast::ast::{Expr, Program, Stmt},
+    errors::ParserError,
+};
 
 fn verify_await_in_async(program: &Program, in_async: bool) -> Result<(), ParserError> {
     for stmt in program {

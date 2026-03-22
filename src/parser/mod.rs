@@ -1,6 +1,6 @@
+pub mod await_ctx_helpers;
 pub mod parser;
 pub mod parser_helpers;
-pub mod await_ctx_helpers;
 
 #[cfg(test)]
 mod tests {
@@ -14,9 +14,17 @@ mod tests {
         assert_eq!(remaining.len(), 0, "Lexer did not consume all input");
         let tokens_wrapper = Tokens::new(&tokens);
         let result = Parser::parse_tokens(tokens_wrapper);
-        assert!(result.is_ok(), "Parser returned an error: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Parser returned an error: {:?}",
+            result.err()
+        );
         let (remaining_tokens, program) = result.unwrap();
-        assert_eq!(remaining_tokens.token.len(), 0, "Parser did not consume all tokens including EOF");
+        assert_eq!(
+            remaining_tokens.token.len(),
+            0,
+            "Parser did not consume all tokens including EOF"
+        );
         program
     }
 
@@ -31,9 +39,18 @@ mod tests {
         let program = parse_test_helper(input);
 
         let expected = vec![
-            Stmt::LetStmt(Ident("x".to_string()), Expr::LitExpr(Literal::IntLiteral(5))),
-            Stmt::LetStmt(Ident("y".to_string()), Expr::LitExpr(Literal::IntLiteral(10))),
-            Stmt::LetStmt(Ident("foobar".to_string()), Expr::LitExpr(Literal::IntLiteral(838383))),
+            Stmt::LetStmt(
+                Ident::new("x".to_string()),
+                Expr::LitExpr(Literal::IntLiteral(5)),
+            ),
+            Stmt::LetStmt(
+                Ident::new("y".to_string()),
+                Expr::LitExpr(Literal::IntLiteral(10)),
+            ),
+            Stmt::LetStmt(
+                Ident::new("foobar".to_string()),
+                Expr::LitExpr(Literal::IntLiteral(838383)),
+            ),
         ];
 
         assert_eq!(program.len(), 3);
@@ -61,7 +78,7 @@ mod tests {
             Stmt::ReturnStmt(Expr::LitExpr(Literal::IntLiteral(993322))),
             Stmt::ReturnStmt(Expr::LitExpr(Literal::IntLiteral(5))),
             Stmt::ReturnStmt(Expr::LitExpr(Literal::IntLiteral(10))),
-            Stmt::ReturnStmt(Expr::LitExpr(Literal::IntLiteral(993322)))
+            Stmt::ReturnStmt(Expr::LitExpr(Literal::IntLiteral(993322))),
         ];
 
         assert_eq!(program.len(), 6);
@@ -79,7 +96,7 @@ mod tests {
         let stmt = &program[0];
         assert_eq!(
             *stmt,
-            Stmt::ExprStmt(Expr::IdentExpr(Ident("foobar".to_string())))
+            Stmt::ExprStmt(Expr::IdentExpr(Ident::new("foobar".to_string())))
         );
     }
 
@@ -90,10 +107,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         let stmt = &program[0];
-        assert_eq!(
-            *stmt,
-            Stmt::ExprStmt(Expr::LitExpr(Literal::IntLiteral(5)))
-        );
+        assert_eq!(*stmt, Stmt::ExprStmt(Expr::LitExpr(Literal::IntLiteral(5))));
     }
 
     #[test]
@@ -109,10 +123,7 @@ mod tests {
             let stmt = &program[0];
             assert_eq!(
                 *stmt,
-                Stmt::ExprStmt(Expr::PrefixExpr(
-                    prefix,
-                    Box::new(Expr::LitExpr(literal))
-                ))
+                Stmt::ExprStmt(Expr::PrefixExpr(prefix, Box::new(Expr::LitExpr(literal))))
             );
         }
     }
@@ -154,9 +165,9 @@ mod tests {
             Infix::Multiply,
             Box::new(Expr::PrefixExpr(
                 Prefix::PrefixMinus,
-                Box::new(Expr::IdentExpr(Ident("a".to_string()))),
+                Box::new(Expr::IdentExpr(Ident::new("a".to_string()))),
             )),
-            Box::new(Expr::IdentExpr(Ident("b".to_string()))),
+            Box::new(Expr::IdentExpr(Ident::new("b".to_string()))),
         );
         match &program[0] {
             Stmt::ExprStmt(expr) => assert_eq!(*expr, expected_expr),
@@ -168,13 +179,12 @@ mod tests {
         assert_eq!(program.len(), 1);
         let expected_expr = Expr::InfixExpr(
             Infix::Plus,
-            Box::new(Expr::IdentExpr(Ident("a".to_string()))),
+            Box::new(Expr::IdentExpr(Ident::new("a".to_string()))),
             Box::new(Expr::InfixExpr(
                 Infix::Multiply,
-                Box::new(Expr::IdentExpr(Ident("b".to_string()))),
-                Box::new(Expr::IdentExpr(Ident("c".to_string()))),
+                Box::new(Expr::IdentExpr(Ident::new("b".to_string()))),
+                Box::new(Expr::IdentExpr(Ident::new("c".to_string()))),
             )),
-            
         );
         match &program[0] {
             Stmt::ExprStmt(expr) => assert_eq!(*expr, expected_expr),
@@ -194,19 +204,24 @@ mod tests {
             _ => panic!("Expected ExprValueStmt, got {:?}", stmt),
         };
 
-        if let Expr::IfExpr { cond, consequence, alternative } = expr {
+        if let Expr::IfExpr {
+            cond,
+            consequence,
+            alternative,
+        } = expr
+        {
             assert_eq!(
                 **cond,
                 Expr::InfixExpr(
                     Infix::LessThan,
-                    Box::new(Expr::IdentExpr(Ident("x".to_string()))),
-                    Box::new(Expr::IdentExpr(Ident("y".to_string())))
+                    Box::new(Expr::IdentExpr(Ident::new("x".to_string()))),
+                    Box::new(Expr::IdentExpr(Ident::new("y".to_string())))
                 )
             );
             assert_eq!(consequence.len(), 1);
             assert_eq!(
                 consequence[0],
-                Stmt::ExprStmt(Expr::IdentExpr(Ident("x".to_string())))
+                Stmt::ExprStmt(Expr::IdentExpr(Ident::new("x".to_string())))
             );
             assert!(alternative.is_none());
         } else {
@@ -226,18 +241,26 @@ mod tests {
             _ => panic!("Expected ExprValueStmt, got {:?}", stmt),
         };
 
-        if let Expr::IfExpr { cond, consequence, alternative } = expr {
+        if let Expr::IfExpr {
+            cond,
+            consequence,
+            alternative,
+        } = expr
+        {
             // if (x < y) { x; }
             assert_eq!(
                 **cond,
                 Expr::InfixExpr(
                     Infix::LessThan,
-                    Box::new(Expr::IdentExpr(Ident("x".to_string()))),
-                    Box::new(Expr::IdentExpr(Ident("y".to_string())))
+                    Box::new(Expr::IdentExpr(Ident::new("x".to_string()))),
+                    Box::new(Expr::IdentExpr(Ident::new("y".to_string())))
                 )
             );
             assert_eq!(consequence.len(), 1);
-            assert_eq!(consequence[0], Stmt::ExprStmt(Expr::IdentExpr(Ident("x".to_string()))));
+            assert_eq!(
+                consequence[0],
+                Stmt::ExprStmt(Expr::IdentExpr(Ident::new("x".to_string())))
+            );
 
             // else if (x > y) { y; } else { z; }
             assert!(alternative.is_some());
@@ -245,25 +268,35 @@ mod tests {
             assert_eq!(alt_program.len(), 1);
 
             let else_if_stmt = &alt_program[0];
-            if let Stmt::ExprValueStmt(Expr::IfExpr { cond, consequence, alternative }) = else_if_stmt {
+            if let Stmt::ExprValueStmt(Expr::IfExpr {
+                cond,
+                consequence,
+                alternative,
+            }) = else_if_stmt
+            {
                 // if (x > y) { y; }
                 assert_eq!(
                     **cond,
                     Expr::InfixExpr(
                         Infix::GreaterThan,
-                        Box::new(Expr::IdentExpr(Ident("x".to_string()))),
-                        Box::new(Expr::IdentExpr(Ident("y".to_string())))
+                        Box::new(Expr::IdentExpr(Ident::new("x".to_string()))),
+                        Box::new(Expr::IdentExpr(Ident::new("y".to_string())))
                     )
                 );
                 assert_eq!(consequence.len(), 1);
-                assert_eq!(consequence[0], Stmt::ExprStmt(Expr::IdentExpr(Ident("y".to_string()))));
+                assert_eq!(
+                    consequence[0],
+                    Stmt::ExprStmt(Expr::IdentExpr(Ident::new("y".to_string())))
+                );
 
                 // else { z; }
                 assert!(alternative.is_some());
                 let final_else_program = alternative.as_ref().unwrap();
                 assert_eq!(final_else_program.len(), 1);
-                assert_eq!(final_else_program[0], Stmt::ExprStmt(Expr::IdentExpr(Ident("z".to_string()))));
-
+                assert_eq!(
+                    final_else_program[0],
+                    Stmt::ExprStmt(Expr::IdentExpr(Ident::new("z".to_string())))
+                );
             } else {
                 panic!("Expected else if to be an IfExpr");
             }
@@ -286,15 +319,15 @@ mod tests {
 
         if let Expr::FnExpr { params, body } = expr {
             assert_eq!(params.len(), 2);
-            assert_eq!(params[0], Ident("x".to_string()));
-            assert_eq!(params[1], Ident("y".to_string()));
+            assert_eq!(params[0], Ident::new("x".to_string()));
+            assert_eq!(params[1], Ident::new("y".to_string()));
             assert_eq!(body.len(), 1);
             assert_eq!(
                 body[0],
                 Stmt::ExprValueStmt(Expr::InfixExpr(
                     Infix::Plus,
-                    Box::new(Expr::IdentExpr(Ident("x".to_string()))),
-                    Box::new(Expr::IdentExpr(Ident("y".to_string())))
+                    Box::new(Expr::IdentExpr(Ident::new("x".to_string()))),
+                    Box::new(Expr::IdentExpr(Ident::new("y".to_string())))
                 ))
             );
         } else {
@@ -314,8 +347,12 @@ mod tests {
             _ => panic!("Expected ExprStmt"),
         };
 
-        if let Expr::CallExpr { function, arguments } = expr {
-            assert_eq!(**function, Expr::IdentExpr(Ident("add".to_string())));
+        if let Expr::CallExpr {
+            function,
+            arguments,
+        } = expr
+        {
+            assert_eq!(**function, Expr::IdentExpr(Ident::new("add".to_string())));
             assert_eq!(arguments.len(), 3);
             assert_eq!(arguments[0], Expr::LitExpr(Literal::IntLiteral(1)));
             assert_eq!(
@@ -345,7 +382,7 @@ mod tests {
         let program = parse_test_helper(input);
         assert_eq!(program.len(), 1);
         let expected = Stmt::AssignStmt(
-            Ident("x".to_string()),
+            Ident::new("x".to_string()),
             Expr::LitExpr(Literal::IntLiteral(5)),
         );
         assert_eq!(program[0], expected);
@@ -359,7 +396,7 @@ mod tests {
         let stmt = &program[0];
         let body_stmt = match stmt {
             Stmt::FnStmt { name, params, body } => {
-                assert_eq!(name, &Ident("a".to_string()));
+                assert_eq!(name, &Ident::new("a".to_string()));
                 assert_eq!(params.len(), 0);
                 assert_eq!(body.len(), 1);
                 &body[0]
@@ -367,7 +404,7 @@ mod tests {
             _ => panic!("Expected FnStmt, got {:?}", stmt),
         };
         if let Stmt::ExprValueStmt(expr) = body_stmt {
-            assert_eq!(*expr, Expr::IdentExpr(Ident("x".to_string())));
+            assert_eq!(*expr, Expr::IdentExpr(Ident::new("x".to_string())));
         } else {
             panic!("Expected ExprValueStmt, got {:?}", body_stmt);
         }
@@ -385,7 +422,7 @@ mod tests {
                 **cond,
                 Expr::InfixExpr(
                     Infix::LessThan,
-                    Box::new(Expr::IdentExpr(Ident("x".to_string()))),
+                    Box::new(Expr::IdentExpr(Ident::new("x".to_string()))),
                     Box::new(Expr::LitExpr(Literal::IntLiteral(5)))
                 )
             );
@@ -393,10 +430,10 @@ mod tests {
             assert_eq!(
                 body[0],
                 Stmt::AssignStmt(
-                    Ident("x".to_string()),
+                    Ident::new("x".to_string()),
                     Expr::InfixExpr(
                         Infix::Plus,
-                        Box::new(Expr::IdentExpr(Ident("x".to_string()))),
+                        Box::new(Expr::IdentExpr(Ident::new("x".to_string()))),
                         Box::new(Expr::LitExpr(Literal::IntLiteral(1)))
                     )
                 )
@@ -413,14 +450,20 @@ mod tests {
         assert_eq!(program.len(), 1);
 
         let stmt = &program[0];
-        if let Stmt::ExprStmt(Expr::CStyleForExpr { init, cond, update, body }) = stmt {
+        if let Stmt::ExprStmt(Expr::CStyleForExpr {
+            init,
+            cond,
+            update,
+            body,
+        }) = stmt
+        {
             // init
             assert!(init.is_some());
             let init_stmt = init.as_ref().unwrap();
             assert_eq!(
                 **init_stmt,
                 Stmt::LetStmt(
-                    Ident("i".to_string()),
+                    Ident::new("i".to_string()),
                     Expr::LitExpr(Literal::IntLiteral(0))
                 )
             );
@@ -432,7 +475,7 @@ mod tests {
                 **cond_expr,
                 Expr::InfixExpr(
                     Infix::LessThan,
-                    Box::new(Expr::IdentExpr(Ident("i".to_string()))),
+                    Box::new(Expr::IdentExpr(Ident::new("i".to_string()))),
                     Box::new(Expr::LitExpr(Literal::IntLiteral(10)))
                 )
             );
@@ -443,10 +486,10 @@ mod tests {
             assert_eq!(
                 **update_stmt,
                 Stmt::AssignStmt(
-                    Ident("i".to_string()),
+                    Ident::new("i".to_string()),
                     Expr::InfixExpr(
                         Infix::Plus,
-                        Box::new(Expr::IdentExpr(Ident("i".to_string()))),
+                        Box::new(Expr::IdentExpr(Ident::new("i".to_string()))),
                         Box::new(Expr::LitExpr(Literal::IntLiteral(1)))
                     )
                 )
@@ -454,9 +497,15 @@ mod tests {
 
             // body
             assert_eq!(body.len(), 1);
-            assert_eq!(body[0], Stmt::ExprStmt(Expr::IdentExpr(Ident("i".to_string()))));
+            assert_eq!(
+                body[0],
+                Stmt::ExprStmt(Expr::IdentExpr(Ident::new("i".to_string())))
+            );
         } else {
-            panic!("Expected Stmt::ExprStmt(Expr::CStyleForExpr), got {:?}", stmt);
+            panic!(
+                "Expected Stmt::ExprStmt(Expr::CStyleForExpr), got {:?}",
+                stmt
+            );
         }
     }
 
@@ -467,11 +516,19 @@ mod tests {
         assert_eq!(program.len(), 1);
 
         let stmt = &program[0];
-        if let Stmt::ExprStmt(Expr::ForExpr { ident, iterable, body }) = stmt {
-            assert_eq!(*ident, Ident("item".to_string()));
-            assert_eq!(**iterable, Expr::IdentExpr(Ident("items".to_string())));
+        if let Stmt::ExprStmt(Expr::ForExpr {
+            ident,
+            iterable,
+            body,
+        }) = stmt
+        {
+            assert_eq!(*ident, Ident::new("item".to_string()));
+            assert_eq!(**iterable, Expr::IdentExpr(Ident::new("items".to_string())));
             assert_eq!(body.len(), 1);
-            assert_eq!(body[0], Stmt::ExprStmt(Expr::IdentExpr(Ident("item".to_string()))));
+            assert_eq!(
+                body[0],
+                Stmt::ExprStmt(Expr::IdentExpr(Ident::new("item".to_string())))
+            );
         } else {
             panic!("Expected Stmt::ExprStmt(Expr::ForExpr), got {:?}", stmt);
         }
