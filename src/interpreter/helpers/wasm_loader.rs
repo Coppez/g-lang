@@ -67,10 +67,11 @@ impl ModuleRegistry {
             WasmModule::load(runtime.engine(), &file_path)?
         };
 
+        let component = wasm_module.component();
         let mut store = runtime.create_store();
-        let mut instance = wasm_module.instantiate(&mut store)?;
+        let instance = wasm_module.instantiate(&mut store)?;
 
-        let export_names = instance.get_export_names(&mut store);
+        let export_names = instance.get_export_names(&mut store, component);
         
         let instance_arc = Arc::new(Mutex::new(Some(instance)));
 

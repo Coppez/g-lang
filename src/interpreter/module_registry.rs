@@ -258,9 +258,11 @@ impl ModuleRegistry {
         let registry_arc_for_eval = Arc::new(Mutex::new(ModuleRegistry::new(base_path)));
         
         let loaded_modules_for_eval = { module_registry_arc.lock().unwrap().loaded_modules.clone() };
+        let wasm_runtime_for_eval = { module_registry_arc.lock().unwrap().wasm_runtime.clone() };
         for (key, val) in loaded_modules_for_eval {
             registry_arc_for_eval.lock().unwrap().loaded_modules.insert(key.clone(), val.clone());
         }
+        registry_arc_for_eval.lock().unwrap().wasm_runtime = wasm_runtime_for_eval;
         
         let exports = ModuleRegistry::extract_exports(program, registry_arc_for_eval).await?;
         

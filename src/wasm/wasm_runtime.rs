@@ -1,5 +1,6 @@
 use crate::errors::RuntimeError;
 use std::path::Path;
+use wasmtime::component::types::ComponentItem;
 use wasmtime::component::{
     Component, Func, Instance, Linker as ComponentLinker, ResourceTable, Val,
 };
@@ -15,7 +16,7 @@ use super::type_conversions;
 pub use type_conversions::*;
 
 // Wasmtime engine wrapper - manages compilation and execution of WASM modules
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct WasmRuntime {
     engine: Engine,
 }
@@ -250,6 +251,13 @@ impl WasmModule {
             WasmModule::Classic { .. } => "classic",
         }
     }
+
+    pub fn component(&self) -> Option<&Component> {
+        match self {
+            WasmModule::Component { component } => Some(component),
+            WasmModule::Classic { .. } => None,
+        }
+    }
 }
 
 // Instantiated WASM module - can be called and queried
@@ -347,7 +355,11 @@ impl WasmClassicInstance {
 
 impl WasmInstance {
     // Get names of all exported functions
-    pub fn get_export_names(&mut self, store: &mut Store<WasmContext>) -> Vec<String> {
+    pub fn get_export_names(
+        &self,
+        store: &mut Store<WasmContext>,
+        component: Option<&Component>,
+    ) -> Vec<String> {
         match self {
             WasmInstance::Classic(i) => i
                 .instance
@@ -361,11 +373,28 @@ impl WasmInstance {
                     }
                 })
                 .collect(),
-            // Components require more complex export traversal - not implemented yet
             WasmInstance::Component(_) => {
-                Vec::new()
-            },
-            
+                let engine = store.engine().clone();
+                let mut names = Vec::new();
+                if let Some(c) = component {
+                    for (name, item) in c.component_type().exports(&engine) {
+                        match item {
+                            ComponentItem::ComponentFunc(_) => {
+                                names.push(String::from(name));
+                            }
+                            ComponentItem::ComponentInstance(inst_ty) => {
+                                for (fn_name, inner) in inst_ty.exports(&engine) {
+                                    if matches!(inner, ComponentItem::ComponentFunc(_)) {
+                                        names.push(format!("{}#{}", name, fn_name));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    names
+                } else { Vec::new() }
+            }
         }
     }
 
