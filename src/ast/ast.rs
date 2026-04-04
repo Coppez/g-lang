@@ -51,6 +51,7 @@ pub enum Stmt {
 pub enum Expr {
     IdentExpr(Ident),
     LitExpr(Literal),
+    LitIndex(usize),
     PrefixExpr(Prefix, Box<Expr>),
     InfixExpr(Infix, Box<Expr>, Box<Expr>),
     IfExpr {

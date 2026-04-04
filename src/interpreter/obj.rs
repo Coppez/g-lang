@@ -13,6 +13,8 @@ use crate::wasm::WasmInstance;
 
 pub type HashMap<K, V> = std::collections::HashMap<K, V, BuildHasherDefault<AHasher>>;
 
+pub use crate::interpreter::constant_pool::ConstantPool;
+
 #[derive(Clone)]
 pub enum Object {
     Integer(i64),
@@ -22,7 +24,7 @@ pub enum Object {
     String(String),
     Array(Vec<Object>),
     Hash(HashMap<Object, Object>),
-    Function(Vec<Ident>, Program, Arc<Mutex<Environment>>),
+    Function(Vec<Ident>, Program, Arc<Mutex<Environment>>, ConstantPool),
     AsyncFunction(Vec<Ident>, Program, Arc<Mutex<Environment>>),
     Builtin(String, usize, usize, BuiltinFunction),
     BuiltinStd(String, usize, usize, StdFunction),
@@ -36,6 +38,7 @@ pub enum Object {
         name: String,
         fields: HashMap<String, Object>,
         methods: HashMap<String, Object>,
+        constants: ConstantPool,
     },
     Module {
         name: String,
@@ -44,7 +47,7 @@ pub enum Object {
     Null,
     ReturnValue(Box<Object>),
     Error(RuntimeError),
-    Method(Vec<Ident>, Program, Arc<Mutex<Environment>>),
+    Method(Vec<Ident>, Program, Arc<Mutex<Environment>>, ConstantPool),
     Break,
     Continue,
     ThrownValue(Box<Object>),
@@ -85,7 +88,7 @@ impl fmt::Debug for Object {
             Object::String(s) => write!(f, "String(\"{}\")", s),
             Object::Array(a) => write!(f, "Array({:?})", a),
             Object::Hash(h) => write!(f, "Hash({:?})", h),
-            Object::Function(p, b, _) => write!(f, "Function(params:{:?}, body:{:?})", p, b),
+            Object::Function(p, b, _, _) => write!(f, "Function(params:{:?}, body:{:?})", p, b),
             Object::AsyncFunction(p, b, _) => {
                 write!(f, "AsyncFunction(params:{:?}, body:{:?})", p, b)
             }
@@ -103,6 +106,7 @@ impl fmt::Debug for Object {
                 name,
                 fields,
                 methods,
+                ..
             } => write!(
                 f,
                 "Struct(name:{}, fields:{:?}, methods:{:?})",
@@ -117,7 +121,7 @@ impl fmt::Debug for Object {
             Object::Null => write!(f, "Null"),
             Object::ReturnValue(o) => write!(f, "ReturnValue({:?})", o),
             Object::Error(e) => write!(f, "Error({:?})", e),
-            Object::Method(p, b, _) => write!(f, "Method(params:{:?}, body:{:?})", p, b),
+            Object::Method(p, b, _, _) => write!(f, "Method(params:{:?}, body:{:?})", p, b),
             Object::Break => write!(f, "Break"),
             Object::Continue => write!(f, "Continue"),
             Object::ThrownValue(o) => write!(f, "ThrownValue({:?})", o),
@@ -159,9 +163,10 @@ impl PartialEq for Object {
                 Object::BuiltinStdAsync(name_a, params_a, params_a1, _),
                 Object::BuiltinStdAsync(name_b, params_b, params_b1, _),
             ) => name_a == name_b && params_a == params_b && params_a1 == params_b1,
-            (Object::Function(params_a, body_a, _), Object::Function(params_b, body_b, _)) => {
-                params_a == params_b && body_a == body_b
-            }
+            (
+                Object::Function(params_a, body_a, _, _),
+                Object::Function(params_b, body_b, _, _),
+            ) => params_a == params_b && body_a == body_b,
             (
                 Object::AsyncFunction(params_a, body_a, _),
                 Object::AsyncFunction(params_b, body_b, _),
@@ -230,7 +235,7 @@ impl Object {
             Object::String(_) => "string".to_string(),
             Object::Array(_) => "array".to_string(),
             Object::Hash(_) => "hash".to_string(),
-            Object::Function(_, _, _) => "function".to_string(),
+            Object::Function(_, _, _, _) => "function".to_string(),
             Object::AsyncFunction(_, _, _) => "async function".to_string(),
             Object::WasmImportedFunction { .. } => "wasm imported function".to_string(),
             Object::Builtin(_, _, _, _) => "builtin function".to_string(),
@@ -239,7 +244,7 @@ impl Object {
             Object::Null => "null".to_string(),
             Object::ReturnValue(_) => "return value".to_string(),
             Object::Error(_) => "error".to_string(),
-            Object::Method(_, _, _) => "method".to_string(),
+            Object::Method(_, _, _, _) => "method".to_string(),
             Object::Struct { name, .. } => format!("struct {}", name),
             Object::Module { name, .. } => format!("module {}", name),
             Object::Break => "break".to_string(),
@@ -290,7 +295,7 @@ impl fmt::Display for Object {
                 fmt_string.push('}');
                 write!(f, "{}", fmt_string)
             }
-            Object::Function(_, _, _) => write!(f, "[function]"),
+            Object::Function(_, _, _, _) => write!(f, "[function]"),
             Object::AsyncFunction(_, _, _) => write!(f, "[async function]"),
             Object::WasmImportedFunction {
                 ref module_name,
@@ -305,7 +310,7 @@ impl fmt::Display for Object {
             Object::Null => write!(f, "null"),
             Object::ReturnValue(ref o) => write!(f, "{}", *o),
             Object::Error(ref e) => write!(f, "{}", e),
-            Object::Method(_, _, _) => write!(f, "[method]"),
+            Object::Method(_, _, _, _) => write!(f, "[method]"),
             Object::Struct {
                 ref name,
                 ref fields,
@@ -341,7 +346,7 @@ impl Hash for Object {
             Object::BigInteger(ref i) => i.hash(state),
             Object::Boolean(ref b) => b.hash(state),
             Object::String(ref s) => s.hash(state),
-            Object::Function(ref params, ref body, _) => {
+            Object::Function(ref params, ref body, _, _) => {
                 params.hash(state);
                 body.hash(state);
             }
@@ -349,7 +354,7 @@ impl Hash for Object {
                 params.hash(state);
                 body.hash(state);
             }
-            Object::Method(ref params, ref body, _) => {
+            Object::Method(ref params, ref body, _, _) => {
                 params.hash(state);
                 body.hash(state);
             }

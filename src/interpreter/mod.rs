@@ -4,7 +4,7 @@ pub mod obj;
 pub mod builtins;
 pub mod module_registry;
 pub mod helpers;
-pub mod eval_context;
+pub mod constant_pool;
 
 #[cfg(test)]
 mod tests {

@@ -1,7 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use crate::interpreter::eval_context::EvalContext;
 use crate::interpreter::helpers::eval_sync::eval_expressions::{
     eval_ident_sync, eval_infix_sync, eval_prefix_sync, register_ident_sync,
 };
@@ -10,7 +9,7 @@ use crate::{
     ast::ast::{Expr, Ident, Program, Stmt},
     errors::RuntimeError,
     interpreter::{
-        env::Environment, module_registry::ModuleRegistry, obj::Object
+        env::Environment, module_registry::ModuleRegistry, obj::{Object, ConstantPool}
     },
 };
 
@@ -20,7 +19,7 @@ pub struct Evaluator {
     pub(crate) env: Arc<Mutex<Environment>>,
     pub(crate) module_registry: Arc<Mutex<ModuleRegistry>>,
     pub(crate) in_async_context: bool,
-    pub(crate) context: EvalContext,
+    pub(crate) constants: ConstantPool,
 }
 
 impl Clone for Evaluator {
@@ -29,7 +28,7 @@ impl Clone for Evaluator {
             env: Arc::clone(&self.env),
             module_registry: Arc::clone(&self.module_registry),
             in_async_context: self.in_async_context,
-            context: self.context.clone(),
+            constants: self.constants.clone(),
         }
     }
 }
@@ -44,12 +43,11 @@ impl Default for Evaluator {
         ));
 
         let env = Arc::new(Mutex::new(Environment::new()));
-        let context = EvalContext::new(Arc::clone(&env), Arc::clone(&registry));
         Evaluator {
             env,
             module_registry: registry,
             in_async_context: false,
-            context,
+            constants: ConstantPool::new(),
         }
     }
 }
@@ -57,12 +55,11 @@ impl Default for Evaluator {
 impl Evaluator {
     pub fn new(module_registry: Arc<Mutex<ModuleRegistry>>) -> Self {
         let env = Arc::new(Mutex::new(Environment::new()));
-        let context = EvalContext::new(Arc::clone(&env), Arc::clone(&module_registry));
         Evaluator {
             env,
             module_registry,
             in_async_context: false,
-            context,
+            constants: ConstantPool::new(),
         }
     }
 
@@ -134,12 +131,13 @@ impl Evaluator {
                             param.slot = crate::ast::ast::SlotIndex(i as u16);
                         }
                     }
-                    let fn_obj = Object::Function(params, body, Arc::clone(&self_clone.env));
+                    let (processed_body, constants) = ConstantPool::from_program(&body);
+                    let fn_obj = Object::Function(params, processed_body, Arc::clone(&self_clone.env), constants);
                     self_clone.register_ident(name, fn_obj)
                 }
                 Stmt::AssignStmt(ident, expr) => {
                     let Ident { ref name, .. } = ident;
-                    if self_clone.context.env.lock().unwrap().get_by_name(name).is_none() {
+                    if self_clone.env.lock().unwrap().get_by_name(name).is_none() {
                         return Object::Error(RuntimeError::UndefinedVariable(name.clone()));
                     }
                     let object = self_clone.eval_expr(expr).await;
@@ -173,6 +171,11 @@ impl Evaluator {
             match expr {
                 Expr::IdentExpr(i) => self_clone.eval_ident(i),
                 Expr::LitExpr(l) => self_clone.eval_literal(&l),
+                Expr::LitIndex(idx) => {
+                    self_clone.constants.get(idx)
+                        .cloned()
+                        .unwrap_or(Object::Null)
+                }
                 Expr::PrefixExpr(prefix, expr) => {
                     let obj = self_clone.eval_expr(*expr).await;
                     self_clone.eval_prefix(prefix, obj)
@@ -258,6 +261,11 @@ impl Evaluator {
         match expr {
             Expr::IdentExpr(i) => eval_ident_sync(env, i),
             Expr::LitExpr(l) => self.eval_literal(l),
+            Expr::LitIndex(idx) => {
+                self.constants.get(*idx)
+                    .cloned()
+                    .unwrap_or(Object::Null)
+            }
             Expr::PrefixExpr(prefix, expr) => {
                 let obj = Self::eval_expr_sync(self, env, expr);
                 eval_prefix_sync(env, prefix, obj)
@@ -282,7 +290,7 @@ impl Evaluator {
             }
             Expr::FnExpr { params, body } => self.eval_fn(params.clone(), body.clone()),
             Expr::AsyncFnExpr { params, body } => {
-                Object::AsyncFunction(params.clone(), body.clone(), Arc::clone(&self.context.env))
+                Object::AsyncFunction(params.clone(), body.clone(), Arc::clone(&self.env))
             },
             Expr::AwaitExpr(_) => {
                 Object::Error(RuntimeError::InvalidOperation(
@@ -437,7 +445,8 @@ impl Evaluator {
                         param.slot = crate::ast::ast::SlotIndex(i as u16);
                     }
                 }
-                let fn_obj = Object::Function(params, body.clone(), Arc::clone(&self.context.env));
+                let (processed_body, constants) = ConstantPool::from_program(body);
+                let fn_obj = Object::Function(params, processed_body, Arc::clone(&self.env), constants);
                 register_ident_sync(env, name.clone(), fn_obj)
             }
             Stmt::AssignStmt(ident, expr) => {

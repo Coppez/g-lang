@@ -4,7 +4,7 @@ use crate::{
     ast::ast::{Expr, Ident},
     errors::RuntimeError,
     interpreter::{
-        env::Environment, obj::{Object, HashMap}
+        env::Environment, obj::{Object, HashMap, ConstantPool}
     },
 };
 use crate::interpreter::builtins::methods::BuiltinMethods;
@@ -32,6 +32,7 @@ impl Evaluator {
                 name: struct_name.clone(),
                 fields: default_fields,
                 methods: struct_methods,
+                constants: ConstantPool::new(),
             };
             
             self_clone.env.lock().unwrap().set_by_name(&struct_name, struct_obj.clone());
@@ -65,6 +66,7 @@ impl Evaluator {
                 name: struct_name,
                 fields: instance_fields,
                 methods,
+                constants: ConstantPool::new(),
             }
         }
     }
@@ -106,9 +108,9 @@ impl Evaluator {
             if let Expr::ThisExpr = object_expr {
                 let current_this = self_clone.env.lock().unwrap().get_by_name("this");
                 match current_this {
-                    Some(Object::Struct { name, mut fields, methods }) => {
+                    Some(Object::Struct { name, mut fields, methods, .. }) => {
                         fields.insert(field_name, value.clone());
-                        let updated_struct = Object::Struct { name, fields, methods };
+                        let updated_struct = Object::Struct { name, fields, methods, constants: ConstantPool::new() };
                         self_clone.env.lock().unwrap().set_by_name("this", updated_struct);
                         return value;
                     }
@@ -147,7 +149,7 @@ impl Evaluator {
                     let old_env = Arc::clone(&self_clone.env);
 
                     let result = match method_obj.clone() {
-                        Object::Function(params, body, _) => {
+                        Object::Function(params, body, _, constants) => {
                             // Allocate enough slots for params + locals in the method body,
                             // plus set "this" by name so methods can reference it.
                             let num_slots = Environment::count_slots(&params, &body);
@@ -158,7 +160,7 @@ impl Evaluator {
                             for e in args_expr {
                                 args.push(self_clone.eval_expr(e).await);
                             }
-                            self_clone.async_eval_fn_call_direct(args, params, body).await
+                            self_clone.async_eval_fn_call_direct(args, params, body, constants).await
                         }
                         _ => {
                             return Object::Error(RuntimeError::NotCallable(method_name));
@@ -190,8 +192,8 @@ impl Evaluator {
                         args.push(self_clone.eval_expr(e.clone()).await);
                     }
                     return match func_obj.clone() {
-                        Object::Function(params, body, _) => {
-                            self_clone.async_eval_fn_call_direct(args, params, body).await
+                        Object::Function(params, body, _, constants) => {
+                            self_clone.async_eval_fn_call_direct(args, params, body, constants).await
                         }
                         Object::BuiltinStd(name, min, max, func) => {
                             if args.len() < min || args.len() > max {

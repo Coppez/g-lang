@@ -1,33 +1,35 @@
 use super::super::super::eval::Evaluator;
 use crate::{
     ast::ast::{Expr, Ident, Program, SlotIndex},
-    interpreter::obj::Object,
+    interpreter::obj::{ConstantPool, Object},
 };
 use std::sync::Arc;
 
 impl Evaluator {
     pub fn eval_fn(&self, params: Vec<Ident>, body: Program) -> Object {
         let params_with_slots = Self::ensure_param_slots(params);
+        let (processed_body, constants) = ConstantPool::from_program(&body);
         let body = Self::ensure_body_slots(
             params_with_slots
                 .iter()
                 .map(|p| (p.name.clone(), p.slot))
                 .collect(),
-            body,
+            processed_body,
         );
-        Object::Function(params_with_slots, body, Arc::clone(&self.context.env))
+        Object::Function(params_with_slots, body, Arc::clone(&self.env), constants)
     }
 
     pub fn eval_method(&self, params: Vec<Ident>, body: Program) -> Object {
         let params_with_slots = Self::ensure_param_slots(params);
+        let (processed_body, constants) = ConstantPool::from_program(&body);
         let body = Self::ensure_body_slots(
             params_with_slots
                 .iter()
                 .map(|p| (p.name.clone(), p.slot))
                 .collect(),
-            body,
+            processed_body,
         );
-        Object::Method(params_with_slots, body, Arc::clone(&self.context.env))
+        Object::Method(params_with_slots, body, Arc::clone(&self.env), constants)
     }
 
     fn ensure_param_slots(mut params: Vec<Ident>) -> Vec<Ident> {

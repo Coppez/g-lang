@@ -4,7 +4,7 @@ use crate::{
     ast::ast::{Expr, Ident, Program},
     errors::RuntimeError,
     interpreter::{
-        env::Environment, obj::{BuiltinFunction, Object, StdFunction}, helpers::type_converters::obj_to_func
+        env::Environment, obj::{BuiltinFunction, Object, StdFunction, ConstantPool}, helpers::type_converters::obj_to_func
     },
     wasm::{WasmInstance, g_to_component_val, component_val_to_g},
 };
@@ -18,8 +18,8 @@ impl Evaluator {
         let fn_ = obj_to_func(fn_object);
 
         match fn_ {
-            Object::Function(params, body, f_env) => {
-                self.eval_fn_call(args_expr, params, body, &f_env).await
+            Object::Function(params, body, f_env, constants) => {
+                self.eval_fn_call(args_expr, params, body, &f_env, constants).await
             }
             Object::AsyncFunction(params, body, f_env) => {
                 let future_obj = self.eval_async_fn_call(args_expr, params, body, &f_env).await;
@@ -91,6 +91,7 @@ impl Evaluator {
         params: Vec<Ident>,
         body: Program,
         f_env: &Arc<Mutex<Environment>>,
+        constants: ConstantPool,
     ) -> impl Future<Output = Object> + Send + '_  {
         let mut self_clone = self.clone();
         let f_env_clone = Arc::clone(f_env);
@@ -109,7 +110,7 @@ impl Evaluator {
             }
 
             let old_env = Arc::clone(&self_clone.env);
-            let old_context_env = Arc::clone(&self_clone.context.env);
+            let old_constants = std::mem::replace(&mut self_clone.constants, constants);
             let num_slots = Environment::count_slots(&params, &body);
             let mut new_env = Environment::new_function_env(f_env_clone, num_slots);
 
@@ -119,10 +120,9 @@ impl Evaluator {
 
             let new_env_arc = Arc::new(Mutex::new(new_env));
             self_clone.env = Arc::clone(&new_env_arc);
-            self_clone.context.env = Arc::clone(&new_env_arc);
             let object = self_clone.eval_blockstmt(&body).await;
             self_clone.env = old_env;
-            self_clone.context.env = old_context_env;
+            self_clone.constants = old_constants;
             self_clone.returned(object)
         }
     }
@@ -168,7 +168,7 @@ impl Evaluator {
             }
             let new_env_arc = Arc::new(Mutex::new(new_env));
             evaluator.env = Arc::clone(&new_env_arc);
-            evaluator.context.env = Arc::clone(&new_env_arc);
+            evaluator.env = Arc::clone(&new_env_arc);
             evaluator.in_async_context = true;
 
             let result = evaluator.eval_blockstmt(&body).await;
@@ -248,6 +248,7 @@ impl Evaluator {
         args: Vec<Object>,
         params: Vec<Ident>,
         body: Program,
+        constants: ConstantPool,
     ) -> impl Future<Output = Object> + Send + '_  {
         let mut self_clone = self.clone();
         async move {
@@ -260,6 +261,7 @@ impl Evaluator {
             }
 
             let old_env = Arc::clone(&self_clone.env);
+            let old_constants = std::mem::replace(&mut self_clone.constants, constants);
             let num_slots = Environment::count_slots(&params, &body);
             let mut new_env = Environment::new_function_env(Arc::clone(&old_env), num_slots);
             for (param, arg) in params.iter().zip(args) {
@@ -268,6 +270,7 @@ impl Evaluator {
             self_clone.env = Arc::new(Mutex::new(new_env));
             let result = self_clone.eval_blockstmt(&body).await;
             self_clone.env = old_env;
+            self_clone.constants = old_constants;
             self_clone.returned(result)
         }
     }

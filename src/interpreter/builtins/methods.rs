@@ -177,22 +177,22 @@ impl BuiltinMethods {
             }
 
             // Struct methods
-            (Object::Struct {name: _, fields: _, methods: _}, "set") => {
+            (Object::Struct {name: _, fields: _, methods: _, constants: _}, "set") => {
                 let mut all_args = vec![object];
                 all_args.extend(args);
                 bset_field_fn(all_args).map_err(|e| RuntimeError::InvalidArguments(e))
             }
-            (Object::Struct {name: _, fields: _, methods: _}, "get") => {
+            (Object::Struct {name: _, fields: _, methods: _, constants: _}, "get") => {
                 let mut all_args = vec![object];
                 all_args.extend(args);
                 bget_field_fn(all_args).map_err(|e| RuntimeError::InvalidArguments(e))
             }
-            (Object::Struct {name: _, fields: _, methods: _},"fields" ) => {
+            (Object::Struct {name: _, fields: _, methods: _, constants: _},"fields" ) => {
                 let mut all_args = vec![object];
                 all_args.extend(args);
                 bstruct_fields_fn(all_args).map_err(|e| RuntimeError::InvalidArguments(e))
             }
-            (Object::Struct {name: _, fields: _, methods: _}, "name") => {
+            (Object::Struct {name: _, fields: _, methods: _, constants: _}, "name") => {
                 let mut all_args = vec![object];
                 all_args.extend(args);
                 bstruct_name_fn(all_args).map_err(|e| RuntimeError::InvalidArguments(e))

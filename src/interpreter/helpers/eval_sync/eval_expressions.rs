@@ -98,7 +98,7 @@ pub fn register_ident_sync(env: &mut Environment, ident: Ident, object: Object) 
 
 impl Evaluator {
     pub fn eval_this(&self) -> Object {
-        match self.context.env.lock().unwrap().get_by_name("this") {
+        match self.env.lock().unwrap().get_by_name("this") {
             Some(obj) => obj,
             None => Object::Error(RuntimeError::InvalidOperation(
                 "'this' can only be used inside a method".to_string(),
@@ -107,7 +107,7 @@ impl Evaluator {
     }
 
     pub fn eval_ident(&self, ident: Ident) -> Object {
-        let borrow_env = self.context.env.lock().unwrap();
+        let borrow_env = self.env.lock().unwrap();
         match borrow_env.get(&ident) {
             Some(o) => o,
             None => Object::Error(RuntimeError::UndefinedVariable(ident.name)),

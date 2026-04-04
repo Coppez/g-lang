@@ -245,7 +245,6 @@ impl Scope {
                     ident.slot = SlotIndex::UNSET;
                 }
             }
-
             Expr::FnExpr { params, body } => {
                 let fn_params: Vec<(String, SlotIndex)> = params
                     .iter_mut()
@@ -388,7 +387,7 @@ impl Scope {
                 self.process_expr(object, locals);
             }
             Expr::AwaitExpr(e) => self.process_expr(e, locals),
-            Expr::LitExpr(_) | Expr::ThisExpr => {}
+            Expr::LitExpr(_) | Expr::ThisExpr => {} | Expr::LitIndex(_) => {}
         }
     }
 
