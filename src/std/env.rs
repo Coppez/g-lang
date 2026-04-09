@@ -1,5 +1,5 @@
 use crate::errors::RuntimeError;
-use crate::interpreter::obj::Object;
+use crate::runtime::obj::Object;
 use std::env::{args};
 
 pub fn env_args(_args: Vec<Object>) -> Result<Object, RuntimeError> {

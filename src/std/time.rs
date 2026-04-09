@@ -5,7 +5,7 @@ use num_traits::{FromPrimitive, ToPrimitive};
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::interpreter::obj::Object;
+use crate::runtime::obj::Object;
 use crate::errors::RuntimeError;
 
 pub fn time_now(_: Vec<Object>) -> Result<Object, RuntimeError> {

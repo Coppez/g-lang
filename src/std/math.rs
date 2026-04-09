@@ -1,5 +1,5 @@
 use crate::errors::RuntimeError;
-use crate::interpreter::obj::Object;
+use crate::runtime::obj::Object;
 use rand::Rng;
 
 pub fn math_clamp(args: Vec<Object>) -> Result<Object, RuntimeError> {

@@ -1,13 +1,22 @@
 use std::io::{self, Write};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
-use crate::{Evaluator, Lexer, Parser, Tokens, interpreter::obj::Object};
+use crate::{Lexer, Parser, Tokens, runtime::obj::Object};
 use crate::parser_errors::{convert_nom_error, show_error_context};
-use crate::compiler::compute_slots::compute_slots;
+use crate::runtime::env::Environment;
+use crate::runtime::module_registry::ModuleRegistry;
+use crate::vm::compiler::Compiler;
+use crate::vm::vm::VirtualMachine;
 
-pub async fn repl(evaluator: Evaluator) {
+pub async fn repl() {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
     println!("g-lang v{}", VERSION);
     println!("Type 'exit' or 'quit' to quit\n");
+
+    let globals = Arc::new(Mutex::new(Environment::new()));
+    let module_registry = Arc::new(Mutex::new(ModuleRegistry::new(PathBuf::from("."))));
+    let mut vm = VirtualMachine::new(globals, module_registry);
 
     loop {
         print!(">> ");
@@ -38,10 +47,9 @@ pub async fn repl(evaluator: Evaluator) {
 
         let tokens = Tokens::new(&token_vec);
 
-        let mut program = match Parser::parse_tokens(tokens) {
+        let program = match Parser::parse_tokens(tokens) {
             Ok((_, program)) => program,
             Err(e) => {
-                // Extract better error information
                 if let nom::Err::Error(err) | nom::Err::Failure(err) = &e {
                     let parser_error = convert_nom_error(&e, "");
                     eprintln!("Parser Error: {}", parser_error);
@@ -53,15 +61,17 @@ pub async fn repl(evaluator: Evaluator) {
             }
         };
 
-        compute_slots(&mut program);
+        let chunk = Compiler::compile_program(&program);
+        let result = vm.run(Arc::new(chunk)).await;
 
-        match evaluator.eval_program(program).await {
-            Object::Null => {}
-            Object::Error(e) => eprintln!("{}", e),
-            Object::String(s) => print!("{}", s),
-            other => println!("{}", other),
+        match result {
+            Ok(Object::Null) => {}
+            Ok(Object::Error(e)) => eprintln!("{}", e),
+            Ok(Object::String(s)) => print!("{}", s),
+            Ok(other) => println!("{}", other),
+            Err(e) => eprintln!("{}", e),
         }
-        
+
         println!();
         io::stdout().flush().unwrap();
     }

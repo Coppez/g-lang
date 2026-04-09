@@ -21,7 +21,7 @@ pub use wasm_runtime::*;
 mod tests {
     use super::*;
     use crate::errors::RuntimeError;
-    use crate::interpreter::obj::Object;
+    use crate::runtime::obj::Object;
     use type_conversions::{component_val_to_g, g_to_component_val, TypeMapping, WasmType};
     use wasmtime::component::Val;
 

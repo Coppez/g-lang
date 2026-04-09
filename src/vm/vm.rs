@@ -1,0 +1,763 @@
+//! Stack-based bytecode virtual machine
+//!
+//! The `VirtualMachine` executes bytecode produced by the compiler.
+//! It uses a flat operand stack for intermediate values and a call frame
+//! stack for function invocation, exception handling, and loop control.
+//!
+//! # Architecture
+//!
+//! - **Stack**: A single `Vec<Object>` shared across all frames. Each frame
+//!   claims a slice of this stack for its local slots.
+//! - **Frames**: `CallFrame` tracks the current chunk, instructio
+//!
+//! Opcode handlers live in `ops/` submodules:
+//! - `ops::stack_vars` — stack, locals, globals, jumps
+//! - `ops::arithmetic` — numeric ops, comparisons, not/negate
+//! - `ops::collections` — arrays, hashes, indexing
+//! - `ops::structs` — struct build, field access, method calls
+//! - `ops::calls` — function invocation, closures, await
+//! - `ops::exceptions` — throw, catch, finallyn pointer,
+//!   slot base, and closure environment.
+//! - **Globals**: An `Environment` for name-based global lookups (builtins,
+//!   top-level `let` bindings).
+//! - **Exception handlers**: A stack of `ExceptionHandler` records for
+//!   try/catch/finally semantics.
+
+
+use std::sync::{Arc, Mutex};
+
+use crate::errors::RuntimeError;
+use crate::runtime::env::Environment;
+use crate::runtime::module_registry::ModuleRegistry;
+use crate::runtime::obj::Object;
+use crate::vm::chunk::Chunk;
+use crate::vm::frame::CallFrame;
+use crate::vm::instruction::Opcode;
+use crate::vm::ops;
+use crate::vm::ops::exceptions::{handle_throw_result, ExceptionHandler};
+
+/// The result of executing a single instruction.
+#[derive(Debug)]
+pub enum ExecResult {
+    Continue,
+    ContinueWith(Object),
+    Return,
+    Throw,
+    Break,
+    ContinueLoop,
+    JumpTo(usize),
+}
+
+/// The stack-based virtual machine.
+///
+/// Executes bytecode from a [`Chunk`] using an operand stack and a call
+/// frame stack. Globals are stored in an `Environment` for name-based
+/// lookups, while locals use the flat stack with slot offsets.
+pub struct VirtualMachine {
+    stack: Vec<Object>,
+    frames: Vec<CallFrame>,
+    globals: Arc<Mutex<Environment>>,
+    module_registry: Arc<Mutex<ModuleRegistry>>,
+    exception_handlers: Vec<ExceptionHandler>,
+    /// Flag indicating a return is pending (set when returning from finally block)
+    pending_return: bool,
+    /// Local names for the root frame (function parameters and local variables)
+    root_local_names: Vec<String>,
+    /// Closure environment for the root frame (used for functions defined in async contexts)
+    root_closure_env: Option<Arc<Mutex<Environment>>>,
+}
+
+impl VirtualMachine {
+    /// Creates a new VM with the given globals and module registry.
+    pub fn new(
+        globals: Arc<Mutex<Environment>>,
+        module_registry: Arc<Mutex<ModuleRegistry>>,
+    ) -> Self {
+        VirtualMachine {
+            stack: Vec::with_capacity(1024),
+            frames: Vec::with_capacity(64),
+            globals,
+            module_registry,
+            exception_handlers: Vec::with_capacity(16),
+            pending_return: false,
+            root_local_names: Vec::new(),
+            root_closure_env: None,
+        }
+    }
+    
+    /// Sets the local names for the root frame (used for function bodies)
+    pub fn set_root_local_names(&mut self, names: Vec<String>) {
+        self.root_local_names = names;
+    }
+
+    /// Sets the closure environment for the root frame (used in async function contexts)
+    pub fn set_root_closure_env(&mut self, env: Arc<Mutex<Environment>>) {
+        self.root_closure_env = Some(env);
+    }
+
+    /// Creates a new VM with pre-initialized stack slots (for async function calls)
+    pub fn new_with_slots(
+        globals: Arc<Mutex<Environment>>,
+        module_registry: Arc<Mutex<ModuleRegistry>>,
+        slot_count: usize,
+        initial_values: Vec<Object>,
+    ) -> Self {
+        let mut vm = VirtualMachine {
+            stack: Vec::with_capacity(1024),
+            frames: Vec::with_capacity(64),
+            globals,
+            module_registry,
+            exception_handlers: Vec::with_capacity(16),
+            pending_return: false,
+            root_local_names: Vec::new(),
+            root_closure_env: None,
+        };
+        vm.stack.resize(slot_count, Object::Null);
+        for (i, val) in initial_values.into_iter().enumerate() {
+            if i < slot_count {
+                vm.stack[i] = val;
+            }
+        }
+        vm
+    }
+
+    /// Runs a top-level program chunk to completion.
+    ///
+    /// Returns the top-of-stack value (the program's result) or a
+    /// `RuntimeError` if execution fails.
+    pub async fn run(&mut self, chunk: Arc<Chunk>) -> Result<Object, RuntimeError> {
+        // Only initialize slots if stack is empty (preserve values from async call setup)
+        if self.stack.is_empty() {
+            let slot_count = 64;
+            self.stack.resize(slot_count, Object::Null);
+        }
+        
+        let slot_count = self.stack.len();
+        let local_names = std::mem::take(&mut self.root_local_names);
+        self.frames
+            .push(CallFrame::new_function_body(Arc::clone(&chunk), slot_count, local_names));
+        
+        // Set the closure environment for the root frame if available (for async function contexts)
+        if let Some(root_env) = self.root_closure_env.take() {
+            if let Some(frame) = self.frames.last_mut() {
+                frame.closure_env = Some(root_env);
+            }
+        }
+
+        let mut result = self.execute().await;
+        
+        // If the result is a Future, we need to await it
+        // This handles the case where an async main() function is called at top level
+        let mut await_depth = 0;
+        while let Ok(Object::Future(future_arc)) = result {
+            await_depth += 1;
+            if await_depth > 100 {
+                return Err(RuntimeError::InvalidOperation(
+                    "Too many nested async calls".to_string(),
+                ));
+            }
+            
+            let future_to_await = {
+                let mut future_opt_guard = future_arc.lock().unwrap();
+                let future = future_opt_guard.take();
+                if let Some(f) = future {
+                    f
+                } else {
+                    return Err(RuntimeError::InvalidOperation(
+                        "Cannot await a future that has already been awaited".to_string(),
+                    ));
+                }
+            };
+            result = future_to_await.await;
+        }
+        
+        self.frames.clear();
+        self.stack.clear();
+        self.exception_handlers.clear();
+        result
+    }
+
+    /// The main execution loop.
+    ///
+    /// Fetches, decodes, and dispatches instructions until the program
+    /// finishes, a return is encountered, or an error occurs.
+    async fn execute(&mut self) -> Result<Object, RuntimeError> {
+        loop {
+            let frame = match self.frames.last() {
+                Some(f) => f,
+                None => {
+                    return Ok(self.stack.pop().unwrap_or(Object::Null));
+                }
+            };
+            let ip = frame.ip;
+            let chunk = Arc::clone(&frame.chunk);
+            
+            if ip >= chunk.code.len() {
+                self.frames.pop();
+                if self.frames.is_empty() {
+                    return Ok(self.stack.pop().unwrap_or(Object::Null));
+                }
+                continue;
+            }
+
+            let opcode_byte = chunk.code[ip];
+            let opcode = match Opcode::from_byte(opcode_byte) {
+                Some(op) => op,
+                None => {
+                    return Err(RuntimeError::InvalidOperation(format!(
+                        "Unknown opcode: 0x{:02X} at IP {}",
+                        opcode_byte, ip
+                    )));
+                }
+            };
+
+            let width = opcode.operand_width();
+            if ip + 1 + width > chunk.code.len() {
+                return Err(RuntimeError::InvalidOperation(format!(
+                    "Truncated instruction at IP {}",
+                    ip
+                )));
+            }
+
+            let read_u8 = |offset: usize| chunk.code[ip + offset];
+            let read_u16 = |offset: usize| {
+                u16::from_be_bytes([chunk.code[ip + offset], chunk.code[ip + offset + 1]])
+            };
+
+            let frame_count_before = self.frames.len();
+            let result = self.dispatch(&chunk, &opcode, &read_u8, &read_u16).await?;
+
+            match result {
+                ExecResult::Continue => {
+                    // Only advance IP if no new frames were added
+                    // (function calls add a new frame, so we don't advance)
+                    if self.frames.len() == frame_count_before {
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.ip = ip + 1 + width;
+                        }
+                    }
+                }
+                ExecResult::ContinueWith(obj) => {
+                    self.stack.push(obj);
+                    // Only advance IP if no new frames were added
+                    if self.frames.len() == frame_count_before {
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.ip = ip + 1 + width;
+                        }
+                    }
+                }
+                ExecResult::Return => {
+                    let return_value = self.stack.pop().unwrap_or(Object::Null);
+                    // Get the callee's slots_base BEFORE popping the frame.
+                    // This is where the callee's stack region starts, and we
+                    // truncate back to it to remove all callee locals/padding.
+                    let callee_slots_base = self.frames.last().map(|f| f.slots_base).unwrap_or(0);
+                    self.frames.pop();
+                    self.stack.truncate(callee_slots_base);
+                    self.stack.push(return_value);
+                    if self.frames.is_empty() {
+                        return Ok(self.stack.pop().unwrap_or(Object::Null));
+                    }
+                }
+                ExecResult::Throw => {
+                    let result = handle_throw_result(
+                        &mut self.stack,
+                        &mut self.exception_handlers,
+                        &mut self.frames,
+                    );
+                    match result {
+                        Ok(ExecResult::Continue) => {
+                            // The handler has already set frame.ip to the catch/finally address.
+                            // Do NOT advance IP.
+                        }
+                        Ok(ExecResult::Throw) => {
+                            // No handler found - this is an uncaught exception at top level.
+                            // Return the ThrownValue on the stack as the result.
+                            return Ok(self.stack.pop().unwrap_or(Object::Null));
+                        }
+                        Ok(_) => {}
+                        Err(RuntimeError::UncaughtException(msg)) => {
+                            // Return the uncaught exception as a ThrownValue
+                            return Ok(Object::ThrownValue(Box::new(Object::String(msg))));
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                }
+                ExecResult::JumpTo(addr) => {
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.ip = addr;
+                    }
+                }
+                ExecResult::Break => {
+                    let addr = match self.stack.pop() {
+                        Some(Object::Integer(a)) => a as usize,
+                        _ => {
+                            return Err(RuntimeError::InvalidOperation(
+                                "Break without address".to_string(),
+                            ));
+                        }
+                    };
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.ip = addr;
+                    }
+                }
+                ExecResult::ContinueLoop => {
+                    let addr = match self.stack.pop() {
+                        Some(Object::Integer(a)) => a as usize,
+                        _ => {
+                            return Err(RuntimeError::InvalidOperation(
+                                "Continue without address".to_string(),
+                            ));
+                        }
+                    };
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.ip = addr;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Dispatch a single decoded instruction to its handler.
+    async fn dispatch(
+        &mut self,
+        chunk: &Chunk,
+        opcode: &Opcode,
+        read_u8: &impl Fn(usize) -> u8,
+        read_u16: &impl Fn(usize) -> u16,
+    ) -> Result<ExecResult, RuntimeError> {
+        match opcode {
+            Opcode::OpConstant => {
+                let idx = read_u16(1);
+                ops::stack_vars::execute_constant(&mut self.stack, chunk, idx);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpPop => {
+                ops::stack_vars::execute_pop(&mut self.stack);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpDup => {
+                ops::stack_vars::execute_dup(&mut self.stack);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpSwap => {
+                ops::stack_vars::execute_swap(&mut self.stack);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpGetLocal => {
+                let slot = read_u8(1);
+                ops::stack_vars::execute_get_local(&mut self.stack, &self.frames, slot);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpSetLocal => {
+                let slot = read_u8(1);
+                ops::stack_vars::execute_set_local(&mut self.stack, &self.frames, slot);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpGetGlobal => {
+                let idx = read_u16(1);
+                
+                // Check if closure_env is the same Arc as globals
+                let same_arc = self.frames.last().map(|f| {
+                    if let Some(closure_arc) = &f.closure_env {
+                        std::ptr::eq(
+                            closure_arc.as_ref() as *const _, 
+                            self.globals.as_ref() as *const _
+                        )
+                    } else {
+                        false
+                    }
+                }).unwrap_or(false);
+                
+                if same_arc {
+                    // Closure env is the same Arc as globals, so just lock once
+                    let globals = self.globals.lock().unwrap();
+                    ops::stack_vars::execute_get_global(
+                        &mut self.stack,
+                        chunk,
+                        &globals,
+                        None,  // Don't pass closure_env separately since it's the same
+                        idx,
+                    );
+                } else {
+                    // Closure env is different, so lock both separately
+                    let globals = self.globals.lock().unwrap();
+                    let closure_env = self.frames.last().and_then(|f| {
+                        f.closure_env.as_ref().map(|e| e.lock().unwrap())
+                    });
+                    ops::stack_vars::execute_get_global(
+                        &mut self.stack,
+                        chunk,
+                        &globals,
+                        closure_env.as_deref(),
+                        idx,
+                    );
+                }
+                
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpSetGlobal => {
+                let idx = read_u16(1);
+                let mut globals = self.globals.lock().unwrap();
+                let closure_env = self.frames.last().and_then(|f| f.closure_env.clone());
+                ops::stack_vars::execute_set_global(
+                    &mut self.stack,
+                    chunk,
+                    &mut globals,
+                    closure_env.as_ref(),
+                    idx,
+                );
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpGetBuiltin => {
+                let idx = read_u8(1);
+                let globals = self.globals.lock().unwrap();
+                ops::stack_vars::execute_get_builtin(&mut self.stack, &globals, idx);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpAdd => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                let result = match (a, b) {
+                    (Object::String(s), Object::String(t)) => Object::String(format!("{}{}", s, t)),
+                    (Object::String(s), other) => Object::String(format!("{}{}", s, other)),
+                    (other, Object::String(s)) => Object::String(format!("{}{}", other, s)),
+                    (Object::Array(mut arr), val) => {
+                        arr.push(val);
+                        Object::Array(arr)
+                    }
+                    (a, b) => ops::arithmetic::add(a, b),
+                };
+                self.stack.push(result);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpSubtract => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::subtract(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpMultiply => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::multiply(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpDivide => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::divide(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpModulo => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::modulo(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpEqual => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::execute_equal(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpNotEqual => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::execute_not_equal(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpLessThan => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::less_than(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpGreaterThan => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::greater_than(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpLessEqual => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::less_equal(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpGreaterEqual => {
+                let b = self.stack.pop().unwrap_or(Object::Null);
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::greater_equal(a, b));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpNot => {
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::execute_not(a));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpNegate => {
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                self.stack.push(ops::arithmetic::execute_negate(a));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpGetLen => {
+                let a = self.stack.pop().unwrap_or(Object::Null);
+                let len = match &a {
+                    Object::Array(arr) => arr.len() as i64,
+                    Object::String(s) => s.len() as i64,
+                    Object::Hash(h) => h.len() as i64,
+                    _ => {
+                        return Ok(ExecResult::ContinueWith(Object::Error(
+                            RuntimeError::InvalidOperation(format!(
+                                "Cannot get length of {}",
+                                a.type_name()
+                            )),
+                        )));
+                    }
+                };
+                self.stack.push(Object::Integer(len));
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpJump => {
+                let offset = read_u16(1);
+                Ok(ops::stack_vars::execute_jump(offset))
+            }
+            Opcode::OpJumpBackward => {
+                let offset = read_u16(1);
+                Ok(ops::stack_vars::execute_jump_backward(offset))
+            }
+            Opcode::OpJumpIfFalse => {
+                let offset = read_u16(1);
+                Ok(ops::stack_vars::execute_jump_if_false(
+                    &mut self.stack,
+                    ops::arithmetic::is_truthy,
+                    offset,
+                ))
+            }
+            Opcode::OpJumpIfTruthy => {
+                let offset = read_u16(1);
+                Ok(ops::stack_vars::execute_jump_if_truthy(
+                    &mut self.stack,
+                    ops::arithmetic::is_truthy,
+                    offset,
+                ))
+            }
+            Opcode::OpPopJumpIfFalse => {
+                let offset = read_u16(1);
+                Ok(ops::stack_vars::execute_pop_jump_if_false(
+                    &mut self.stack,
+                    ops::arithmetic::is_truthy,
+                    offset,
+                ))
+            }
+            Opcode::OpCall => {
+                let argc = read_u8(1) as usize;
+                ops::calls::execute_call(
+                    &mut self.stack,
+                    &mut self.frames,
+                    &self.module_registry,
+                    &self.globals,
+                    argc,
+                )
+            }
+            Opcode::OpCallBuiltin => {
+                let argc = read_u8(1) as usize;
+                ops::calls::execute_call(
+                    &mut self.stack,
+                    &mut self.frames,
+                    &self.module_registry,
+                    &self.globals,
+                    argc,
+                )
+            }
+            Opcode::OpCallAsync => {
+                let argc = read_u8(1) as usize;
+                ops::calls::execute_call(
+                    &mut self.stack,
+                    &mut self.frames,
+                    &self.module_registry,
+                    &self.globals,
+                    argc,
+                )
+            }
+            Opcode::OpReturnValue => {
+                // Check if there's an active finally block we need to jump to
+                if let Some(handler) = self.exception_handlers.last() {
+                    if let Some(finally_addr) = handler.finally_addr {
+                        // There's a finally block - jump to it instead of returning
+                        self.pending_return = true;
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.ip = finally_addr as usize;
+                        }
+                        return Ok(ExecResult::Continue);
+                    }
+                }
+                // No finally block - return normally
+                Ok(ops::calls::execute_return_value())
+            }
+            Opcode::OpClosure => {
+                ops::calls::execute_closure(
+                    &mut self.stack,
+                    &mut self.frames,
+                );
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpAwait => {
+                let future_obj = match self.stack.pop() {
+                    Some(v) => v,
+                    None => {
+                        return Ok(ExecResult::ContinueWith(Object::Error(
+                            RuntimeError::InvalidOperation(
+                                "Stack underflow on Await".to_string(),
+                            ),
+                        )));
+                    }
+                };
+
+                match future_obj {
+                    Object::Future(future_arc) => {
+                        let future_to_await = {
+                            let mut future_opt_guard = future_arc.lock().unwrap();
+                            let future = future_opt_guard.take();
+                            drop(future_opt_guard);
+                            if let Some(f) = future {
+                                f
+                            } else {
+                                return Ok(ExecResult::ContinueWith(Object::Error(
+                                    RuntimeError::InvalidOperation(
+                                        "Cannot await a future that has already been awaited"
+                                            .to_string(),
+                                    ),
+                                )));
+                            }
+                        };
+
+                        let result = future_to_await.await;
+                        match result {
+                            Ok(obj) => {
+                                self.stack.push(obj);
+                            }
+                            Err(e) => {
+                                self.stack.push(Object::Error(e));
+                            }
+                        }
+                        Ok(ExecResult::Continue)
+                    }
+                    Object::Error(e) => {
+                        self.stack.push(Object::Error(e));
+                        Ok(ExecResult::Continue)
+                    }
+                    _ => Ok(ExecResult::ContinueWith(Object::Error(
+                        RuntimeError::InvalidOperation(format!(
+                            "Cannot await non-future type: {}",
+                            future_obj.type_name()
+                        )),
+                    ))),
+                }
+            }
+            Opcode::OpBuildArray => {
+                let count = read_u16(1);
+                ops::collections::execute_build_array(&mut self.stack, count);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpBuildHash => {
+                let pair_count = read_u16(1);
+                ops::collections::execute_build_hash(&mut self.stack, pair_count);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpIndex => {
+                ops::collections::execute_index(&mut self.stack);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpSetIndex => {
+                ops::collections::execute_set_index(&mut self.stack);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpBuildStruct => {
+                let field_count = read_u8(1);
+                ops::structs::execute_build_struct(&mut self.stack, field_count);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpGetField => {
+                ops::structs::execute_get_field(&mut self.stack);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpSetField => {
+                ops::structs::execute_set_field(&mut self.stack);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpCallMethod => {
+                let argc = read_u8(1) as usize;
+                match ops::structs::execute_call_method(&mut self.stack, argc)? {
+                    ops::structs::MethodCallResult::NeedsCall => {
+                        ops::calls::execute_call(
+                            &mut self.stack,
+                            &mut self.frames,
+                            &self.module_registry,
+                            &self.globals,
+                            argc,
+                        )
+                    }
+                    ops::structs::MethodCallResult::Done => {
+                        Ok(ExecResult::Continue)
+                    }
+                    ops::structs::MethodCallResult::Error(err_obj) => {
+                        self.stack.push(err_obj);
+                        Ok(ExecResult::Continue)
+                    }
+                }
+            }
+            Opcode::OpThrow => Ok(ops::exceptions::execute_throw(&mut self.stack)),
+            Opcode::OpPushCatch => {
+                let catch_addr = read_u16(1);
+                let finally_addr = read_u16(3);
+                ops::exceptions::execute_push_catch(
+                    &mut self.exception_handlers,
+                    catch_addr,
+                    finally_addr,
+                );
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpPopCatch => {
+                ops::exceptions::execute_pop_catch(&mut self.exception_handlers, &self.stack);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpPushFinally => {
+                let addr = read_u16(1);
+                ops::exceptions::execute_push_finally(&mut self.exception_handlers, addr);
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpEndFinally => {
+                let result = ops::exceptions::execute_end_finally(&mut self.exception_handlers, &mut self.stack, &mut self.pending_return);
+                Ok(result)
+            }
+            Opcode::OpBreak => {
+                let addr = read_u16(1);
+                self.stack.push(Object::Integer(addr as i64));
+                Ok(ExecResult::Break)
+            }
+            Opcode::OpContinue => {
+                let addr = read_u16(1);
+                self.stack.push(Object::Integer(addr as i64));
+                Ok(ExecResult::ContinueLoop)
+            }
+            Opcode::OpImportModule => {
+                let idx = read_u16(1);
+                ops::modules::execute_import_module(
+                    &mut self.stack,
+                    chunk,
+                    &self.module_registry,
+                    idx,
+                )?;
+                Ok(ExecResult::Continue)
+            }
+            Opcode::OpGetExport => {
+                ops::modules::execute_get_export(&mut self.stack);
+                Ok(ExecResult::Continue)
+            }
+        }
+    }
+}

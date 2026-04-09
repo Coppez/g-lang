@@ -768,7 +768,30 @@ fn parse_for_stmt(input: Tokens) -> IResult<Tokens, Stmt> {
     let (i2, _) = lparen_tag(i1)?;
 
     match peek_token(i2) {
-        Some(Token::Let) => parse_c_style_for(i2),
+        Some(Token::Let) => {
+            // Check if it's `for (let x in ...)` or `for (let x = ...; ...; ...)`
+            let (after_let, _) = let_tag(i2)?;
+            if let Ok((after_ident, ident)) = parse_ident(after_let) {
+                if peek_matches(after_ident, Token::In) {
+                    // for (let x in ...) — parse as for-in
+                    let idents = vec![ident];
+                    let (i3, _) = in_tag(after_ident)?;
+                    let (i4, iterable) = parse_expr(i3)?;
+                    let (i5, _) = rparen_tag(i4)?;
+                    let (i6, body) = parse_block_stmt(i5)?;
+                    return Ok((
+                        i6,
+                        Stmt::ExprStmt(Expr::ForExpr {
+                            ident: idents,
+                            iterable: Box::new(iterable),
+                            body,
+                        }),
+                    ));
+                }
+            }
+            // Otherwise fall through to c-style for
+            parse_c_style_for(i2)
+        }
         Some(Token::Ident(_)) => {
             if let Ok((after_ident, _)) = parse_ident(i2) {
                 if peek_matches(after_ident, Token::In) {

@@ -2,7 +2,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use std::path::Path;
 
-use crate::interpreter::obj::Object;
+use crate::runtime::obj::Object;
 use crate::errors::RuntimeError;
 use std::sync::{Arc, Mutex};
 

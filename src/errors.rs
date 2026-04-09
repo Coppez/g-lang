@@ -43,6 +43,7 @@ pub enum RuntimeError {
     NotIndexable(String),
     EmptyArray,
     InvalidArguments(String),
+    UncaughtException(String),
 }
 
 impl fmt::Display for LangError {
@@ -116,6 +117,7 @@ impl fmt::Display for RuntimeError {
             RuntimeError::NotIndexable(s) => write!(f, "{} is not indexable", s),
             RuntimeError::EmptyArray => write!(f, "Cannot perform operation on empty array"),
             RuntimeError::InvalidArguments(s) => write!(f, "Invalid arguments: {}", s),
+            RuntimeError::UncaughtException(s) => write!(f, "Uncaught exception: {}", s),
         }
     }
 }

@@ -12,7 +12,7 @@
 //!   for interacting with WASM linear memory
 
 use crate::errors::RuntimeError;
-use crate::interpreter::obj::Object;
+use crate::runtime::obj::Object;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -1,26 +1,13 @@
 use std::env;
 use std::fs;
 
-use g_lang::Evaluator;
 use g_lang::runners::print_help::print_help;
 use g_lang::runners::run_check::run_check;
 use g_lang::runners::run_source::run_source;
 use g_lang::runners::run_repl_mode::repl;
 
-/// CLI entry point.
-///
-/// Dispatches to one of four execution modes based on the first CLI argument:
-///
-/// | Argument            | Mode                                  |
-/// |---------------------|---------------------------------------|
-/// | *(none)*            | REPL (interactive read-eval-print)    |
-/// | `run <file>`        | Execute a `.g` script                 |
-/// | `check <file>`      | Parse-only syntax validation          |
-/// | `-v` / `--version`  | Print version and exit                |
-/// | `-h` / `--help`     | Print usage and exit                  |
 #[tokio::main]
 async fn main() {
-    let mut evaluator = Evaluator::default();
     let args: Vec<String> = env::args().collect();
 
     match args.get(1) {
@@ -64,7 +51,7 @@ async fn main() {
                     }
                 };
 
-            run_source(&source, &mut evaluator).await;
+                run_source(&source).await;
             }
         }
 
@@ -73,6 +60,6 @@ async fn main() {
             eprintln!("Use --help for usage.");
         }
 
-        None => repl(evaluator).await,
+        None => repl().await,
     }
 }
